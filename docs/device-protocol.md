@@ -33,7 +33,7 @@ Control messages are UTF-8 JSON text frames, limited to 4,096 encoded bytes. Eve
 {"v":1,"type":"ping","nonce":"bounded-value"}
 ```
 
-A successful `hello` is required before turns; binary input requires an active turn. Turn IDs and nonces are limited to 64 characters. `playback.report` is optional bring-up telemetry retained only as bounded aggregate source/sample counts; the validated production firmware does not yet emit it.
+A successful `hello` is required before turns; binary input requires an active turn. Turn IDs and nonces are limited to 64 characters. `playback.report` is optional aggregate telemetry emitted after uninterrupted playback. It retains only the selected source and sample count; validated firmware reports `remote` only after complete response validation and reports `local` when a completed relay turn fails that gate.
 
 ### Relay → device
 

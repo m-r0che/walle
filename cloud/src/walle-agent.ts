@@ -62,6 +62,8 @@ function sendJson(connection: Connection, value: unknown): void {
 export class WalleAgent extends Agent<Env> {
   private readonly turnStats = new Map<string, TurnStats>();
   private readonly suppressedPongs = new Set<string>();
+  private dropNextOutputFrame = false;
+  private mismatchNextDoneSamples = false;
 
   static options = {
     sendIdentityOnConnect: false,
@@ -164,6 +166,16 @@ export class WalleAgent extends Agent<Env> {
       suppressed++;
     }
     return suppressed;
+  }
+
+  dropNextOutputFrameForTest(): boolean {
+    this.dropNextOutputFrame = true;
+    return true;
+  }
+
+  mismatchNextDoneSamplesForTest(): boolean {
+    this.mismatchNextDoneSamples = true;
+    return true;
   }
 
   disconnectDeviceForTest(): number {
@@ -331,12 +343,17 @@ export class WalleAgent extends Agent<Env> {
             )
           `;
         }
+        const committedSamples = committed?.samples ?? 0;
+        const reportedSamples = this.mismatchNextDoneSamples
+          ? committedSamples + 1
+          : committedSamples;
+        this.mismatchNextDoneSamples = false;
         sendJson(connection, {
           v: 1,
           type: "turn.done",
           turnId: message.turnId,
           frames: committed?.frames ?? 0,
-          samples: committed?.samples ?? 0,
+          samples: reportedSamples,
         });
         console.log(JSON.stringify({
           event: "device.turn_echo",
@@ -417,6 +434,17 @@ export class WalleAgent extends Agent<Env> {
     stats.frames++;
     stats.samples += frame.sampleCount;
 
+    if (this.dropNextOutputFrame) {
+      this.dropNextOutputFrame = false;
+      console.log(JSON.stringify({
+        event: "device.test_output_frame_dropped",
+        installation: this.name,
+        connectionId: connection.id,
+        turnId: state.activeTurnId,
+        sequence: frame.sequence,
+      }));
+      return;
+    }
     connection.send(encodeAudioFrame({
       ...frame,
       kind: AudioFrameKind.OutputPcm16,

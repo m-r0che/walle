@@ -28,7 +28,12 @@ export default {
       url.pathname === "/v1/debug/disconnect-device";
     const debugSuppressPong =
       url.pathname === "/v1/debug/suppress-pong";
-    if (debugStatus || debugDisconnect || debugSuppressPong) {
+    const debugDropOutput =
+      url.pathname === "/v1/debug/drop-next-output-frame";
+    const debugMismatchDone =
+      url.pathname === "/v1/debug/mismatch-next-done-samples";
+    if (debugStatus || debugDisconnect || debugSuppressPong
+        || debugDropOutput || debugMismatchDone) {
       const expectedMethod = debugStatus ? "GET" : "POST";
       if (request.method !== expectedMethod) {
         return jsonError(405, "method_not_allowed");
@@ -47,11 +52,18 @@ export default {
       const agent = await getAgentByName(env.WalleAgent, env.INSTALLATION_ID, {
         routingRetry: { maxAttempts: 3 },
       });
-      const result = debugStatus
-        ? await agent.getDebugStatus()
-        : debugDisconnect
-          ? { disconnected: await agent.disconnectDeviceForTest() }
-          : { suppressed: await agent.suppressPongsForTest() };
+      let result: unknown;
+      if (debugStatus) {
+        result = await agent.getDebugStatus();
+      } else if (debugDisconnect) {
+        result = { disconnected: await agent.disconnectDeviceForTest() };
+      } else if (debugSuppressPong) {
+        result = { suppressed: await agent.suppressPongsForTest() };
+      } else if (debugDropOutput) {
+        result = { armed: await agent.dropNextOutputFrameForTest() };
+      } else {
+        result = { armed: await agent.mismatchNextDoneSamplesForTest() };
+      }
       return Response.json(result, {
         headers: { "Cache-Control": "no-store" },
       });

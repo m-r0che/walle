@@ -1,6 +1,6 @@
 # Walle Cloud relay
 
-Cloudflare Agents SDK relay for one Walle installation. This phase is intentionally an authenticated PCM echo transport; OpenAI and tools are added only after the binary device protocol is stable.
+Cloudflare Agents SDK relay for one Walle installation. The current provider is an authenticated PCM echo transport with validated complete-turn device playback and local fallback. OpenAI and tools are the next provider phase.
 
 Deployed prototype: `wss://walle-relay.matt-ce8.workers.dev/v1/device`
 
@@ -47,4 +47,4 @@ npx wrangler deploy
 
 Do not place device or OpenAI credentials in `wrangler.jsonc`, source, shell history, or Git. `INSTALLATION_ID` is a non-secret routing label and may remain in config.
 
-The device now sends a positive `sessionEpoch` in `hello`; `ready` echoes it and firmware rejects mismatched readiness. Manager-owned reconnect passed a forced clean close (~3 seconds), active Worker deployments, and an intentionally suppressed application pong (~20 seconds) without reboot. Authenticated `POST /v1/debug/disconnect-device` and `POST /v1/debug/suppress-pong` exist only as bounded bring-up fault-injection seams and never expose credentials or PCM.
+The device now sends a positive `sessionEpoch` in `hello`; `ready` echoes it and firmware rejects mismatched readiness. Manager-owned reconnect passed a forced clean close (~3 seconds), active Worker deployments, and an intentionally suppressed application pong (~20 seconds) without reboot. Authenticated `POST /v1/debug/disconnect-device`, `POST /v1/debug/suppress-pong`, `POST /v1/debug/drop-next-output-frame`, and `POST /v1/debug/mismatch-next-done-samples` exist only as bounded bring-up fault-injection seams and never expose credentials or PCM. The latter two are one-shot faults used to prove exact local fallback.

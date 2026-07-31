@@ -451,3 +451,25 @@ Physical and authenticated remote validation passed:
 Every frame count equals `ceil(samples / 960)`, and the Agent accepts a commit only after contiguous frame sequences. Local replay remained normal and authoritative. This isolates the rejected display shutdown away from the 960-sample network message size: changing codec/audio-task cadence or another removed downlink change was responsible.
 
 The promoted source commit is `6956c2f`; the exact flashed app SHA-256 is `b926040df0468a289da20fd6576a2e9dd0fdb6c040919a3f36878391926cdb02`. Its bootloader, partition table, app, hashes, and evidence are stored owner-only at `~/Library/Application Support/Walle/recovery/walle-network-batching-coldboot-visible-b926040df0468a28/`.
+
+### Validated complete-turn remote PCM playback
+
+Two allocation-free modules now protect the downlink. `remote_event_queue` is a 32-event usable-capacity SPSC queue from the WebSocket event task to the audio task; callbacks copy validated frames directly into PSRAM slots and never wait, allocate, write the codec, or own teardown. `remote_response` buffers at most six seconds and makes PCM readable only after token-scoped buffered, relay-reported, and local-capture counts match. Stale tokens, overflow, mismatch, timeout, cancellation, reconnect, and supersession cannot expose partial remote audio. The audio task alone observes the 220 ms minimum thinking interval, applies the 500 ms response deadline, chooses remote versus untouched local capture, and owns codec writes.
+
+Host evidence passed under ASan/UBSan: exact frame ordering/readout, three-way count validation, overflow, stale events, cancellation, timeout, source selection, queue wrap/full/reset, a 100,000-event concurrent SPSC stress, and integrated exact/missing-frame/queue-overflow pipelines. The firmware retained 256-sample codec reads, 960-sample network frames, 35 ms display submission pacing, and the validated DIRAM footprint.
+
+Physical and authenticated echo validation passed:
+
+- initial 15-second power-off and 60-second continuously visible cold boot;
+- 59,392-sample exact remote playback over 62 frames;
+- 126,208-sample (5.26-second) exact remote playback over 132 frames;
+- forced reconnect epoch 1 → 2 in roughly three seconds;
+- 53,760-sample exact post-reconnect remote playback over 56 frames;
+- one intentionally omitted output frame produced exact 36,608-sample **local** fallback;
+- an intentionally wrong completion count produced exact 52,736-sample **local** fallback;
+- playback interruption immediately began a replacement capture, whose 36,864 samples then played remotely;
+- two-minute continuous visibility, 13/13 ready checks, and planned epoch 4 → 5 refresh;
+- final 15-second power-off and 60-second continuously visible cold boot;
+- final fresh-boot 47,104-sample exact remote playback over 50 frames.
+
+The face and audio remained normal. The promoted firmware source commit is `a9b37f8`; exact app SHA-256 is `6310d81102ef42c3b272dc1a83564292a6c225bfc736a3b7c906550c7dfab9c8`. Fault validation used deployed Worker version `e128a3b2-e7de-4cab-a409-6184bf5a0558`. The owner-only recovery set is `~/Library/Application Support/Walle/recovery/walle-remote-echo-coldboot-visible-6310d81102ef42c3/`.

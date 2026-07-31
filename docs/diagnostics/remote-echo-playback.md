@@ -2,7 +2,7 @@
 
 **Branch:** `diagnostic/remote-echo-playback`
 
-**Status:** integrated echo candidate built and tested off-device; not flashed
+**Status:** physically validated and promoted as the current recovery baseline
 
 ## Safety contract
 
@@ -21,7 +21,7 @@ Any failure leaves the existing local capture available for playback. Partial re
 
 `remote_response` is an allocation-free complete-turn buffer over caller-owned storage. Its interface hides token isolation, bounded append, three-way sample-count validation, overflow/mismatch invalidation, cancellation, and readout gating. Stale-token events are rejected without damaging the current response. A new turn atomically discards older state.
 
-The intended production adapter will allocate six seconds of PCM storage in PSRAM. `remote_event_queue` is a bounded allocation-free single-producer/single-consumer seam between the WebSocket event task and audio task. The producer copies already-validated frames directly into caller-owned slots and publishes them with release/acquire ordering; the consumer peeks in place, avoiding a second 1,920-byte copy and a large stack object. Only the audio task will mutate `remote_response`, choose remote versus local source, and write the codec.
+The production adapter allocates six seconds of PCM storage in PSRAM. `remote_event_queue` is a bounded allocation-free single-producer/single-consumer seam between the WebSocket event task and audio task. The producer copies already-validated frames directly into caller-owned slots and publishes them with release/acquire ordering; the consumer peeks in place, avoiding a second 1,920-byte copy and a large stack object. Only the audio task will mutate `remote_response`, choose remote versus local source, and write the codec.
 
 `remote_response_select` centralizes timing policy: it preserves the authored minimum thinking interval, chooses only a complete response, waits no longer than the response deadline, invalidates an expired partial response, and otherwise selects local fallback.
 
@@ -78,6 +78,30 @@ The branch now wires the tested modules into the existing owners:
 
 No display files changed. `FRAME_SAMPLES` remains 256, `NETWORK_FRAME_SAMPLES` remains 960, and the CO5300 pacing path remains unchanged.
 
+## Physical validation
+
+The exact firmware candidate is source commit `a9b37f8` with app SHA-256 `6310d81102ef42c3b272dc1a83564292a6c225bfc736a3b7c906550c7dfab9c8`. Cloud fault validation used deployed Worker version `e128a3b2-e7de-4cab-a409-6184bf5a0558`.
+
+All promotion gates passed without native USB serial during visibility checks:
+
+- Initial 15-second power-off and 60-second continuously visible cold boot.
+- Exact remote playback: 59,392 samples / 62 frames.
+- Exact long remote playback: 126,208 samples / 132 frames (5.26 seconds).
+- Forced reconnect in roughly three seconds, epoch 1 → 2.
+- Exact post-reconnect remote playback: 53,760 samples / 56 frames.
+- One intentionally omitted output frame: exact 36,608-sample local fallback after 39 input frames.
+- Intentionally wrong completion count: exact 52,736-sample local fallback after 55 input frames.
+- Immediate playback interruption/new recording, followed by exact 36,864-sample remote playback.
+- Two-minute continuously visible soak with 13/13 ready checks and planned epoch 4 → 5 refresh.
+- Final 15-second power-off and 60-second continuously visible cold boot.
+- Final fresh-boot exact remote playback: 47,104 samples / 50 frames.
+
+The face and audio remained normal throughout. Every successful input frame count equals `ceil(samples / 960)`, and every playback report exactly matches its authoritative local capture count. The fault cases explicitly reported `source: local`; normal cases reported `source: remote`.
+
+The owner-only recovery set is stored outside Git at:
+
+`~/Library/Application Support/Walle/recovery/walle-remote-echo-coldboot-visible-6310d81102ef42c3/`
+
 ## Next controlled step
 
-Commit and rebuild the exact candidate, then flash it with the validated `b926040d…` recovery set ready. The first hardware run will retain echo mode and must pass exact remote playback plus timeout, mismatch, overflow, cancellation, reconnect, local fallback, display soak, and true cold boot before any OpenAI connection is introduced.
+The bounded PCM path is now ready for a Cloudflare-side OpenAI Realtime adapter. Echo mode remains the fallback provider until credentials are supplied and the same completion, cancellation, reconnect, fallback, visibility, and cold-boot gates pass with generated speech.
