@@ -429,4 +429,25 @@ Measured results identified transport message rate—not PCM bandwidth—as the 
 - At 480 samples (~50 messages/s), one 4.22-second turn committed 211 frames with zero uplink drops, 211/211 matching echoes, zero protocol/hash errors, and zero inbound-queue drops. However, a 75-frame backlog drained for roughly three seconds after release; only 188 frames had arrived by the 500 ms source-selection deadline, so the device correctly reported local fallback.
 - Changing codec/audio-task cadence to 960 samples (40 ms) reduced message rate below measured transport capacity, but the face physically disappeared 15–20 seconds after cold boot. That candidate was rejected immediately rather than interpreting healthy transfer callbacks as display success.
 
-The exact `5c19c3cd…` reconnect image was restored and physically confirmed visible again. Production source was then rolled back and rebuilt to the identical SHA-256. Remote playback will resume only in a separate diagnostic that keeps the proven 256-sample codec cadence and aggregates four capture chunks into one 960-sample network frame inside the network owner. No rejected remote-playback firmware remains on the device or production source.
+The exact `5c19c3cd…` reconnect image was restored and physically confirmed visible again. Production source was then rolled back and rebuilt to the identical SHA-256. Remote playback will resume only in a separate diagnostic that keeps the proven 256-sample codec cadence and aggregates capture chunks into bounded 960-sample network frames inside the network owner. No rejected remote-playback firmware remains on the device or production source.
+
+### Validated network-owned PCM batching
+
+An allocation-free `pcm_batcher` module now sits between the existing 256-sample capture queue and WebSocket sender. It preserves codec/I²S timing, carries spill across chunk boundaries, emits full 960-sample frames, flushes the final partial frame before commit, and discards buffered state on cancellation or sender failure. Its PSRAM storage is the PCM portion of the eventual `WA` frame, avoiding both a second 1,920-byte copy and a larger manager-task stack frame. ASan/UBSan host tests cover ordering, arbitrary boundaries, partial completion, cancellation, and fail-closed emission failure.
+
+A deterministic cadence model reproduced the unsustainable 256-sample strategy and predicted that 960-sample framing would preserve the 32-item queue through a six-second turn for synchronous send times up to 40 ms. A one-variable hardware candidate then changed only network batching—no downlink playback, codec cadence, display timing, or local replay behavior.
+
+Physical and authenticated remote validation passed:
+
+- initial 15-second power-off and 60-second continuously visible cold boot;
+- 75,008 samples in exactly 79 frames;
+- 121,344 samples (5.06 seconds) in exactly 127 frames;
+- two further minutes of continuous visibility and 13/13 ready remote checks;
+- normal planned session refresh;
+- injected disconnect recovery in roughly three seconds, epoch 3 → 4;
+- 59,904 post-reconnect samples in exactly 63 frames;
+- final 15-second power-off and 60-second continuously visible cold boot.
+
+Every frame count equals `ceil(samples / 960)`, and the Agent accepts a commit only after contiguous frame sequences. Local replay remained normal and authoritative. This isolates the rejected display shutdown away from the 960-sample network message size: changing codec/audio-task cadence or another removed downlink change was responsible.
+
+The promoted source commit is `6956c2f`; the exact flashed app SHA-256 is `b926040df0468a289da20fd6576a2e9dd0fdb6c040919a3f36878391926cdb02`. Its bootloader, partition table, app, hashes, and evidence are stored owner-only at `~/Library/Application Support/Walle/recovery/walle-network-batching-coldboot-visible-b926040df0468a28/`.

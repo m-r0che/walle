@@ -2,7 +2,7 @@
 
 **Branch:** `diagnostic/pcm-network-batching`
 
-**Status:** built and tested off-device; not yet flashed or physically validated
+**Status:** physically validated and promoted as the current recovery baseline
 
 ## Question
 
@@ -60,13 +60,22 @@ The initial pre-commit off-device build had app SHA-256 `043a93c6787d5d1d6f68f96
 - App SHA-256: `b926040df0468a289da20fd6576a2e9dd0fdb6c040919a3f36878391926cdb02`
 - Initial remote check: authenticated protocol-ready connection, firmware `6956c2f`, session epoch 1
 
-It must not be promoted unless all of the following pass:
+## Physical validation
 
-1. True cold boot with the face continuously visible for at least 60 seconds before interaction.
-2. One short committed turn and one near-six-second turn, with normal local replay.
-3. Authenticated cloud aggregate reports exact sample counts, contiguous sequences, and expected frame count `ceil(samples / 960)`.
-4. Face continuously visible for at least two minutes after the turns, without native USB serial attached.
-5. Forced reconnect followed by another successful turn.
-6. Final 15-second power-off and cold-boot visibility check.
+All promotion gates passed without opening native USB serial during visibility checks:
 
-If visibility fails at any point, restore commit `7925d4e` / app `5c19c3cd…` immediately. Successful transfer callbacks or cloud metrics do not override a physical display failure.
+1. A 15-second power-off followed by a true cold boot remained continuously visible for at least 60 seconds before interaction.
+2. The first turn committed 75,008 samples in exactly 79 frames; local replay and the face remained normal.
+3. A 5.06-second turn committed 121,344 samples in exactly 127 frames; local replay and the face remained normal.
+4. The face remained continuously visible for a further two-minute soak. All 13 authenticated remote samples found one ready connection; a planned session refresh recovered normally.
+5. An injected socket close recovered in roughly three seconds from epoch 3 to epoch 4.
+6. The post-reconnect turn committed 59,904 samples in exactly 63 frames.
+7. A final 15-second power-off and 60-second cold-boot visibility check passed.
+
+Every observed frame count equals `ceil(samples / 960)`. The Agent enforces contiguous sequences before persisting a committed turn, so these aggregate records also prove no sequence gap. The experiment did not add remote playback; local replay remained authoritative throughout.
+
+The exact bootloader, partition table, app, checksums, and evidence are stored owner-only outside Git at:
+
+`~/Library/Application Support/Walle/recovery/walle-network-batching-coldboot-visible-b926040df0468a28/`
+
+Successful transport callbacks still do not override physical visibility in future candidates. The prior `7925d4e` / `5c19c3cd…` recovery baseline remains available as a fallback.
