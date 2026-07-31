@@ -34,6 +34,7 @@ export type RelayDebugStatus = {
   pendingResponse: boolean;
   providerError: string | null;
   protocolError: string | null;
+  outputPaceMs: number;
 };
 
 export type GenerationMetrics = {
@@ -84,8 +85,9 @@ type PendingResponse = {
   generationCompletedAt: number | null;
 };
 
-// Match the validated 960-sample / 24 kHz device ingress cadence.
-const OUTPUT_FRAME_PACE_MS = 40;
+// Generated output is downlink-only; pace below burst rate while allowing the
+// audio task to drain its bounded event queue between callbacks.
+const OUTPUT_FRAME_PACE_MS = 10;
 
 type DeviceConnectionState = {
   ready: boolean;
@@ -250,6 +252,7 @@ export class WalleAgent extends Agent<WalleEnv> {
       pendingResponse: this.pendingResponse !== null,
       providerError: this.providerError,
       protocolError: this.protocolError,
+      outputPaceMs: OUTPUT_FRAME_PACE_MS,
     };
   }
 
@@ -273,6 +276,7 @@ export class WalleAgent extends Agent<WalleEnv> {
   }
 
   disconnectDeviceForTest(): number {
+    this.closeRealtime("relay reconnect test");
     let disconnected = 0;
     for (const connection of this.getConnections()) {
       connection.close(1012, "Relay reconnect test");
