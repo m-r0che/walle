@@ -24,13 +24,17 @@
 #define BITS_PER_SAMPLE 16
 #define CHANNEL_COUNT 1
 #define FRAME_SAMPLES 256
-#define MAX_RECORDING_SECONDS 6
+#define MAX_RECORDING_SECONDS 30
+#define MAX_REMOTE_RESPONSE_SECONDS 30
 #define RECORDING_COMMIT_MS 180
 #define PRECOMMIT_RING_MS 220
 #define PLAYBACK_RING_MS 500
+#define STREAM_START_BUFFER_MS 500
 #define PREPARE_DELAY_MS 220
-#define REMOTE_RESPONSE_DEADLINE_MS 6000
-#define REMOTE_EVENT_STORAGE_COUNT 256
+#define REMOTE_RESPONSE_INITIAL_DEADLINE_MS 10000
+#define REMOTE_RESPONSE_STALL_DEADLINE_MS 5000
+#define REMOTE_RESPONSE_MAX_WAIT_MS 45000
+#define REMOTE_EVENT_STORAGE_COUNT 1024
 #define DEFAULT_OUTPUT_VOLUME_PERCENT 20
 #define MIN_OUTPUT_VOLUME_PERCENT 10
 #define MAX_OUTPUT_VOLUME_PERCENT 100
@@ -76,10 +80,12 @@ struct offline_echo {
     void *stream_context;
     bool stream_turn_accepted;
     bool remote_attempted;
+    bool remote_streaming_allowed;
     uint32_t turn_counter;
     uint32_t active_turn_token;
     int64_t prepare_until_us;
     int64_t remote_deadline_us;
+    int64_t remote_absolute_deadline_us;
 };
 
 static esp_codec_dev_sample_info_t sample_info(void)
@@ -178,10 +184,30 @@ static void process_remote_events(offline_echo_t *echo)
             bool accepted = true;
             switch (event->type) {
             case REMOTE_EVENT_AUDIO:
+                if (event->input_count != 0) {
+                    echo->remote_streaming_allowed = true;
+                }
                 accepted = remote_response_append(
                     &echo->remote_response, event->turn_token,
                     event->samples, event->sample_count);
                 if (accepted) {
+                    if (echo->remote_absolute_deadline_us > 0) {
+                        const int64_t progress_deadline_us =
+                            esp_timer_get_time()
+                            + REMOTE_RESPONSE_STALL_DEADLINE_MS * 1000LL;
+                        const int64_t bounded_deadline_us =
+                            progress_deadline_us
+                                < echo->remote_absolute_deadline_us
+                            ? progress_deadline_us
+                            : echo->remote_absolute_deadline_us;
+                        if (remote_response_streaming(
+                                &echo->remote_response,
+                                echo->active_turn_token)
+                                || bounded_deadline_us
+                                    > echo->remote_deadline_us) {
+                            echo->remote_deadline_us = bounded_deadline_us;
+                        }
+                    }
                     portENTER_CRITICAL(&echo->snapshot_lock);
                     echo->snapshot.remote_audio_frames++;
                     portEXIT_CRITICAL(&echo->snapshot_lock);
@@ -418,6 +444,9 @@ static void begin_recording(offline_echo_t *echo)
     }
     echo->active_turn_token = echo->turn_counter;
     echo->remote_attempted = false;
+    echo->remote_streaming_allowed = false;
+    echo->remote_deadline_us = 0;
+    echo->remote_absolute_deadline_us = 0;
     reset_audio_rings(echo);
     set_recorded_samples(echo, 0);
     set_recording_committed(echo, false);
@@ -500,18 +529,30 @@ static playback_command_result_t handle_playback_command(offline_echo_t *echo)
 
 static bool playback_source_available(offline_echo_t *echo,
                                       bool use_remote,
+                                      bool streaming,
                                       uint32_t turn_token)
 {
-    return use_remote
-        ? remote_response_status(&echo->remote_response, turn_token)
-            == REMOTE_RESPONSE_READY
-        : pcm_ring_count(&echo->capture_ring) > 0;
+    if (!use_remote) {
+        return pcm_ring_count(&echo->capture_ring) > 0;
+    }
+    if (!streaming) {
+        return remote_response_status(&echo->remote_response, turn_token)
+            == REMOTE_RESPONSE_READY;
+    }
+    const remote_response_status_t status = remote_response_status(
+        &echo->remote_response, turn_token);
+    return status == REMOTE_RESPONSE_RECEIVING
+        || (status == REMOTE_RESPONSE_READY
+            && !remote_response_stream_finished(
+                &echo->remote_response, turn_token));
 }
 
 static bool refill_playback_ring(offline_echo_t *echo, int16_t *scratch,
-                                 bool use_remote, uint32_t turn_token)
+                                 bool use_remote, bool streaming,
+                                 uint32_t turn_token)
 {
-    while (playback_source_available(echo, use_remote, turn_token)
+    while (playback_source_available(
+               echo, use_remote, streaming, turn_token)
             && pcm_ring_free(&echo->playback_ring) > 0) {
         size_t count = pcm_ring_free(&echo->playback_ring);
         if (count > FRAME_SAMPLES) {
@@ -521,6 +562,9 @@ static bool refill_playback_ring(offline_echo_t *echo, int16_t *scratch,
             ? remote_response_read(&echo->remote_response, turn_token,
                                    scratch, count)
             : pcm_ring_read(&echo->capture_ring, scratch, count);
+        if (read == 0 && use_remote && streaming) {
+            break;
+        }
         if (read == 0
                 || pcm_ring_write(&echo->playback_ring, scratch, read)
                     != read) {
@@ -533,14 +577,18 @@ static bool refill_playback_ring(offline_echo_t *echo, int16_t *scratch,
     return true;
 }
 
-static void play_recording(offline_echo_t *echo, bool use_remote)
+static void play_recording(offline_echo_t *echo, bool use_remote,
+                           bool streaming)
 {
     const uint32_t turn_token = echo->active_turn_token;
-    const size_t expected_samples = use_remote
+    size_t expected_samples = use_remote
         ? remote_response_sample_count(&echo->remote_response, turn_token)
         : echo->recorded_samples;
     const bool remote_attempted = echo->remote_attempted;
-    if (is_muted(echo) || expected_samples == 0 || turn_token == 0) {
+    if (is_muted(echo) || turn_token == 0
+            || (!streaming && expected_samples == 0)
+            || (streaming && !remote_response_streaming(
+                &echo->remote_response, turn_token))) {
         reset_audio_rings(echo);
         set_recorded_samples(echo, 0);
         set_recording_committed(echo, false);
@@ -566,8 +614,21 @@ static void play_recording(offline_echo_t *echo, bool use_remote)
     bool write_failed = false;
     bool start_recording = false;
     bool cancelled = false;
-    while (playback_source_available(echo, use_remote, turn_token)
+    bool stream_failed = false;
+    while (playback_source_available(
+               echo, use_remote, streaming, turn_token)
             || pcm_ring_count(&echo->playback_ring) > 0) {
+        if (streaming) {
+            process_remote_events(echo);
+            const remote_response_status_t status = remote_response_status(
+                &echo->remote_response, turn_token);
+            if (status == REMOTE_RESPONSE_INVALID
+                    || status == REMOTE_RESPONSE_EMPTY) {
+                stream_failed = true;
+                pcm_ring_reset(&echo->playback_ring);
+                break;
+            }
+        }
         const playback_command_result_t command =
             handle_playback_command(echo);
         if (command == PLAYBACK_COMMAND_START_RECORDING) {
@@ -578,7 +639,8 @@ static void play_recording(offline_echo_t *echo, bool use_remote)
             cancelled = true;
             break;
         }
-        if (!refill_playback_ring(echo, samples, use_remote, turn_token)) {
+        if (!refill_playback_ring(
+                echo, samples, use_remote, streaming, turn_token)) {
             write_failed = true;
             break;
         }
@@ -587,9 +649,18 @@ static void play_recording(offline_echo_t *echo, bool use_remote)
                                            FRAME_SAMPLES);
         update_ring_depths(echo);
         if (count == 0) {
+            if (streaming
+                    && remote_response_status(
+                        &echo->remote_response, turn_token)
+                        == REMOTE_RESPONSE_RECEIVING
+                    && esp_timer_get_time() < echo->remote_deadline_us) {
+                vTaskDelay(pdMS_TO_TICKS(1));
+                continue;
+            }
             portENTER_CRITICAL(&echo->snapshot_lock);
             echo->snapshot.playback_underruns++;
             portEXIT_CRITICAL(&echo->snapshot_lock);
+            stream_failed = streaming;
             break;
         }
 
@@ -610,8 +681,14 @@ static void play_recording(offline_echo_t *echo, bool use_remote)
 
     esp_codec_dev_set_out_mute(echo->codec, true);
     set_playback_level(echo, 0.0f);
+    if (streaming) {
+        expected_samples = remote_response_sample_count(
+            &echo->remote_response, turn_token);
+    }
     const bool completed = !write_failed && !cancelled && !start_recording
-        && played_samples == expected_samples;
+        && !stream_failed && played_samples == expected_samples
+        && (!streaming || remote_response_stream_finished(
+            &echo->remote_response, turn_token));
     if (completed) {
         if (use_remote) {
             portENTER_CRITICAL(&echo->snapshot_lock);
@@ -628,15 +705,20 @@ static void play_recording(offline_echo_t *echo, bool use_remote)
         }
     }
     if (!start_recording) {
+        if (stream_failed) {
+            cancel_pending_remote(echo);
+        }
         remote_response_cancel(&echo->remote_response, turn_token);
         reset_audio_rings(echo);
         set_recorded_samples(echo, 0);
         set_recording_committed(echo, false);
         echo->active_turn_token = 0;
         echo->remote_attempted = false;
-        update_state(echo,
-                     write_failed ? OFFLINE_ECHO_ERROR : OFFLINE_ECHO_IDLE,
-                     write_failed ? ESP_FAIL : ESP_OK);
+        update_state(
+            echo,
+            (write_failed || stream_failed)
+                ? OFFLINE_ECHO_ERROR : OFFLINE_ECHO_IDLE,
+            (write_failed || stream_failed) ? ESP_FAIL : ESP_OK);
     }
     ESP_LOGI(TAG,
              "Playback complete source=%s samples=%u failed=%d cancelled=%d interrupted=%d",
@@ -674,7 +756,9 @@ static void apply_command(offline_echo_t *echo, const command_t *command)
                 echo->prepare_until_us = stopped_us
                     + PREPARE_DELAY_MS * 1000LL;
                 echo->remote_deadline_us = stopped_us
-                    + REMOTE_RESPONSE_DEADLINE_MS * 1000LL;
+                    + REMOTE_RESPONSE_INITIAL_DEADLINE_MS * 1000LL;
+                echo->remote_absolute_deadline_us = stopped_us
+                    + REMOTE_RESPONSE_MAX_WAIT_MS * 1000LL;
                 update_state(echo, OFFLINE_ECHO_PREPARING, ESP_OK);
                 ESP_LOGI(TAG, "Recording stopped duration=%ums",
                          (unsigned)snapshot.recorded_ms);
@@ -728,6 +812,17 @@ static void audio_task(void *argument)
         offline_echo_get_snapshot(echo, &snapshot);
         if (snapshot.state == OFFLINE_ECHO_PREPARING) {
             const int64_t now_us = esp_timer_get_time();
+            const size_t stream_start_samples =
+                SAMPLE_RATE_HZ * STREAM_START_BUFFER_MS / 1000;
+            if (echo->remote_attempted
+                    && echo->remote_streaming_allowed
+                    && now_us >= echo->prepare_until_us
+                    && remote_response_start_streaming(
+                        &echo->remote_response, echo->active_turn_token,
+                        stream_start_samples)) {
+                play_recording(echo, true, true);
+                continue;
+            }
             const bool expiring = echo->remote_attempted
                 && now_us >= echo->remote_deadline_us
                 && remote_response_status(
@@ -740,7 +835,7 @@ static void audio_task(void *argument)
                     echo->prepare_until_us / 1000,
                     echo->remote_deadline_us / 1000);
             if (decision == REMOTE_RESPONSE_USE_REMOTE) {
-                play_recording(echo, true);
+                play_recording(echo, true, false);
                 continue;
             }
             if (decision == REMOTE_RESPONSE_USE_LOCAL) {
@@ -750,7 +845,7 @@ static void audio_task(void *argument)
                     echo->snapshot.remote_timeouts++;
                     portEXIT_CRITICAL(&echo->snapshot_lock);
                 }
-                play_recording(echo, false);
+                play_recording(echo, false, false);
                 continue;
             }
         }
@@ -809,7 +904,9 @@ static void audio_task(void *argument)
             echo->prepare_until_us = stopped_us
                 + PREPARE_DELAY_MS * 1000LL;
             echo->remote_deadline_us = stopped_us
-                + REMOTE_RESPONSE_DEADLINE_MS * 1000LL;
+                + REMOTE_RESPONSE_INITIAL_DEADLINE_MS * 1000LL;
+            echo->remote_absolute_deadline_us = stopped_us
+                + REMOTE_RESPONSE_MAX_WAIT_MS * 1000LL;
             update_state(echo, OFFLINE_ECHO_PREPARING, ESP_OK);
             ESP_LOGI(TAG, "Recording reached six-second ring limit");
         }
@@ -841,6 +938,8 @@ esp_err_t offline_echo_create(offline_echo_t **out_echo)
                         "allocate echo state");
     portMUX_INITIALIZE(&echo->snapshot_lock);
     const size_t capture_capacity = SAMPLE_RATE_HZ * MAX_RECORDING_SECONDS;
+    const size_t remote_response_capacity =
+        SAMPLE_RATE_HZ * MAX_REMOTE_RESPONSE_SECONDS;
     const size_t precommit_capacity =
         SAMPLE_RATE_HZ * PRECOMMIT_RING_MS / 1000;
     const size_t playback_capacity =
@@ -855,7 +954,7 @@ esp_err_t offline_echo_create(offline_echo_t **out_echo)
         playback_capacity * sizeof(int16_t),
         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     echo->remote_response_storage = heap_caps_malloc(
-        capture_capacity * sizeof(int16_t),
+        remote_response_capacity * sizeof(int16_t),
         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     echo->remote_event_storage = heap_caps_malloc(
         REMOTE_EVENT_STORAGE_COUNT * sizeof(remote_event_t),
@@ -866,7 +965,7 @@ esp_err_t offline_echo_create(offline_echo_t **out_echo)
             || echo->remote_event_storage == NULL
             || !remote_response_init(
                 &echo->remote_response, echo->remote_response_storage,
-                capture_capacity)
+                remote_response_capacity)
             || !remote_event_queue_init(
                 &echo->remote_events, echo->remote_event_storage,
                 REMOTE_EVENT_STORAGE_COUNT)) {
@@ -911,11 +1010,13 @@ esp_err_t offline_echo_create(offline_echo_t **out_echo)
 
     *out_echo = echo;
     ESP_LOGI(TAG,
-             "Ready: 24 kHz mono, capture=%ums precommit=%ums playback=%ums total=%u bytes",
-             MAX_RECORDING_SECONDS * 1000, PRECOMMIT_RING_MS,
+             "Ready: 24 kHz mono, capture=%ums remote-max=%ums precommit=%ums playback=%ums total=%u bytes",
+             MAX_RECORDING_SECONDS * 1000,
+             MAX_REMOTE_RESPONSE_SECONDS * 1000, PRECOMMIT_RING_MS,
              PLAYBACK_RING_MS,
-             (unsigned)((capture_capacity * 2 + precommit_capacity
-                         + playback_capacity) * sizeof(int16_t)
+             (unsigned)((capture_capacity + remote_response_capacity
+                         + precommit_capacity + playback_capacity)
+                        * sizeof(int16_t)
                         + REMOTE_EVENT_STORAGE_COUNT
                             * sizeof(remote_event_t)));
     return ESP_OK;

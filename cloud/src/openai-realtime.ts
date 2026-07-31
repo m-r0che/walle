@@ -1,6 +1,6 @@
 export const OPENAI_REALTIME_MODEL = "gpt-realtime-2.1";
 export const OPENAI_REALTIME_VOICE = "marin";
-export const MAX_OUTPUT_SAMPLES = 144_000;
+export const MAX_OUTPUT_SAMPLES = 24_000 * 30;
 const SAMPLE_RATE = 24_000;
 const MAX_OUTPUT_BYTES = MAX_OUTPUT_SAMPLES * 2;
 const MAX_SERVER_EVENT_CHARS = 512_000;
@@ -155,7 +155,8 @@ export class OpenAIRealtimeSession {
         instructions: [
           "You are Walle, a tiny warm-hearted home robot.",
           "Be curious, gentle, playful, and truthful.",
-          "Reply with one short spoken sentence, usually under twelve words.",
+          "Keep ordinary replies concise, but use enough detail to answer naturally.",
+          "Longer answers are allowed when they are genuinely useful.",
           "Never claim a tool action succeeded unless a tool result confirms it.",
           "Do not use markdown, lists, stage directions, or sound-effect spelling.",
         ].join(" "),

@@ -13,6 +13,7 @@ import {
   decodeAudioFrame,
   decodeControlMessage,
   encodeAudioFrame,
+  MAX_INPUT_SAMPLES,
   type DeviceTelemetryReport,
 } from "./protocol";
 
@@ -411,6 +412,7 @@ export class WalleAgent extends Agent<WalleEnv> {
           v: 1,
           type: "ready",
           mode: provider,
+          playback: provider === "openai" ? "buffered" : "complete",
           sampleRate: 24_000,
           channels: 1,
           sampleFormat: "pcm16le",
@@ -658,6 +660,9 @@ export class WalleAgent extends Agent<WalleEnv> {
       throw new Error("audio frame sequence is not contiguous");
     }
     stats.nextSequence = (frame.sequence + 1) >>> 0;
+    if (stats.samples + frame.sampleCount > MAX_INPUT_SAMPLES) {
+      throw new Error("turn input exceeds the bounded capture duration");
+    }
     stats.frames++;
     stats.samples += frame.sampleCount;
 

@@ -1,6 +1,7 @@
 export const PROTOCOL_VERSION = 1;
 export const SAMPLE_RATE_HZ = 24_000;
 export const MAX_AUDIO_SAMPLES = 960; // 40 ms of 24 kHz mono PCM16
+export const MAX_INPUT_SAMPLES = SAMPLE_RATE_HZ * 30;
 export const AUDIO_HEADER_BYTES = 12;
 
 const MAGIC_0 = 0x57; // W
@@ -190,7 +191,7 @@ export function decodeControlMessage(text: string): DeviceControlMessage {
         typeof message.samples !== "number" ||
         !Number.isInteger(message.samples) ||
         message.samples <= 0 ||
-        message.samples > 144_000
+        message.samples > 720_000
       ) {
         throw new Error("playback report is invalid");
       }

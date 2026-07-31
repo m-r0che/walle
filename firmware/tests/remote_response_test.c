@@ -168,6 +168,56 @@ static void test_source_selection_is_bounded_and_complete_only(void)
            == REMOTE_RESPONSE_USE_LOCAL);
 }
 
+static void test_buffered_streaming_reads_before_completion(void)
+{
+    int16_t storage[24];
+    int16_t first[10];
+    int16_t second[4];
+    int16_t output[8];
+    remote_response_t response;
+    fill_sequence(first, ARRAY_SIZE(first), 0);
+    fill_sequence(second, ARRAY_SIZE(second), 10);
+    assert(remote_response_init(&response, storage, ARRAY_SIZE(storage)));
+    assert(remote_response_begin(&response, 50));
+    assert(remote_response_append(&response, 50, first, ARRAY_SIZE(first)));
+    assert(!remote_response_start_streaming(&response, 50, 12));
+    assert(remote_response_start_streaming(&response, 50, 8));
+    assert(remote_response_streaming(&response, 50));
+    assert(remote_response_unread_samples(&response, 50) == 10);
+
+    assert(remote_response_read(&response, 50, output, 6) == 6);
+    for (size_t index = 0; index < 6; index++) {
+        assert(output[index] == (int16_t)index);
+    }
+    assert(remote_response_append(
+        &response, 50, second, ARRAY_SIZE(second)));
+    assert(remote_response_complete(&response, 50, 14, 9, 9));
+    assert(remote_response_read(&response, 50, output, 8) == 8);
+    for (size_t index = 0; index < 8; index++) {
+        assert(output[index] == (int16_t)(index + 6));
+    }
+    assert(remote_response_stream_finished(&response, 50));
+    assert(remote_response_status(&response, 50) == REMOTE_RESPONSE_READY);
+    assert(remote_response_sample_count(&response, 50) == 14);
+    assert(remote_response_cancel(&response, 50));
+}
+
+static void test_late_streaming_mismatch_invalidates(void)
+{
+    int16_t storage[16];
+    int16_t samples[8] = {0};
+    remote_response_t response;
+    assert(remote_response_init(&response, storage, ARRAY_SIZE(storage)));
+    assert(remote_response_begin(&response, 51));
+    assert(remote_response_append(&response, 51, samples, 8));
+    assert(remote_response_start_streaming(&response, 51, 4));
+    assert(remote_response_read(&response, 51, samples, 4) == 4);
+    assert(!remote_response_complete(&response, 51, 7, 4, 4));
+    assert(remote_response_status(&response, 51)
+           == REMOTE_RESPONSE_INVALID);
+    assert(!remote_response_stream_finished(&response, 51));
+}
+
 static void test_invalid_configuration_and_new_turn_reset(void)
 {
     int16_t storage[8];
@@ -196,6 +246,8 @@ int main(void)
     test_stale_events_do_not_damage_current_turn();
     test_timeout_and_cancel_never_make_audio_readable();
     test_source_selection_is_bounded_and_complete_only();
+    test_buffered_streaming_reads_before_completion();
+    test_late_streaming_mismatch_invalidates();
     test_invalid_configuration_and_new_turn_reset();
     puts("remote_response_test: PASS");
     return 0;

@@ -13,6 +13,7 @@ static void clear_turn(remote_response_t *response,
 {
     response->sample_count = 0;
     response->read_offset = 0;
+    response->streaming_started = false;
     if (status == REMOTE_RESPONSE_EMPTY) {
         response->turn_token = 0;
     }
@@ -42,6 +43,7 @@ bool remote_response_begin(remote_response_t *response, uint32_t turn_token)
     response->sample_count = 0;
     response->read_offset = 0;
     response->status = REMOTE_RESPONSE_RECEIVING;
+    response->streaming_started = false;
     return true;
 }
 
@@ -82,7 +84,9 @@ bool remote_response_complete(remote_response_t *response,
         clear_turn(response, REMOTE_RESPONSE_INVALID);
         return false;
     }
-    response->read_offset = 0;
+    if (!response->streaming_started) {
+        response->read_offset = 0;
+    }
     response->status = REMOTE_RESPONSE_READY;
     return true;
 }
@@ -111,12 +115,56 @@ bool remote_response_cancel(remote_response_t *response,
     return true;
 }
 
+bool remote_response_start_streaming(remote_response_t *response,
+                                     uint32_t turn_token,
+                                     size_t minimum_buffered_samples)
+{
+    if (!configured(response) || turn_token == 0
+            || minimum_buffered_samples == 0
+            || response->turn_token != turn_token
+            || response->status != REMOTE_RESPONSE_RECEIVING
+            || response->streaming_started
+            || response->sample_count - response->read_offset
+                < minimum_buffered_samples) {
+        return false;
+    }
+    response->streaming_started = true;
+    return true;
+}
+
+bool remote_response_streaming(const remote_response_t *response,
+                               uint32_t turn_token)
+{
+    return configured(response) && turn_token != 0
+        && response->turn_token == turn_token
+        && response->streaming_started;
+}
+
+size_t remote_response_unread_samples(const remote_response_t *response,
+                                      uint32_t turn_token)
+{
+    return remote_response_status(response, turn_token)
+            == REMOTE_RESPONSE_EMPTY
+        ? 0 : response->sample_count - response->read_offset;
+}
+
+bool remote_response_stream_finished(const remote_response_t *response,
+                                     uint32_t turn_token)
+{
+    return remote_response_streaming(response, turn_token)
+        && remote_response_status(response, turn_token)
+            == REMOTE_RESPONSE_READY
+        && response->read_offset == response->sample_count;
+}
+
 size_t remote_response_read(remote_response_t *response, uint32_t turn_token,
                             int16_t *samples, size_t capacity)
 {
     if (!configured(response) || turn_token == 0 || samples == NULL
             || capacity == 0 || response->turn_token != turn_token
-            || response->status != REMOTE_RESPONSE_READY) {
+            || (response->status != REMOTE_RESPONSE_READY
+                && !(response->status == REMOTE_RESPONSE_RECEIVING
+                     && response->streaming_started))) {
         return 0;
     }
     const size_t remaining = response->sample_count - response->read_offset;
@@ -124,7 +172,9 @@ size_t remote_response_read(remote_response_t *response, uint32_t turn_token,
     memcpy(samples, &response->storage[response->read_offset],
            count * sizeof(*samples));
     response->read_offset += count;
-    if (response->read_offset == response->sample_count) {
+    if (response->read_offset == response->sample_count
+            && response->status == REMOTE_RESPONSE_READY
+            && !response->streaming_started) {
         clear_turn(response, REMOTE_RESPONSE_EMPTY);
     }
     return count;

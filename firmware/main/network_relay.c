@@ -61,7 +61,8 @@
 #define AUDIO_HEADER_BYTES 12
 #define CAPTURE_CHUNK_SAMPLES 256
 #define NETWORK_FRAME_SAMPLES 960
-#define MAX_TURN_SAMPLES 144000
+#define MAX_INPUT_TURN_SAMPLES 720000
+#define MAX_OUTPUT_TURN_SAMPLES 720000
 #define STREAM_QUEUE_LENGTH 640
 #define STREAM_CONTROL_RESERVE 2
 #define EXPECTED_ECHO_SLOTS 64
@@ -158,6 +159,7 @@ struct network_relay {
     atomic_uint next_output_sequence;
     atomic_bool output_turn_active;
     atomic_bool generated_output_mode;
+    atomic_bool buffered_output_mode;
     atomic_bool telemetry_dirty;
     uint32_t epoch_counter;
     uint32_t stream_turn_epoch;
@@ -260,6 +262,7 @@ static void reset_stream_state(network_relay_t *relay)
     atomic_store(&relay->output_input_samples, 0);
     atomic_store(&relay->next_output_sequence, 0);
     atomic_store(&relay->generated_output_mode, false);
+    atomic_store(&relay->buffered_output_mode, false);
     pcm_batcher_abort(&relay->pcm_batcher);
     xQueueReset(relay->stream_queue);
     xSemaphoreGive(relay->stream_mutex);
@@ -360,6 +363,7 @@ static bool control_matches_output_turn(network_relay_t *relay)
 
 static bool control_named_count(network_relay_t *relay,
                                 const char *name,
+                                uint32_t maximum,
                                 uint32_t *sample_count)
 {
     char label[32];
@@ -375,7 +379,7 @@ static bool control_named_count(network_relay_t *relay,
     const char *digits = field + label_length;
     char *end = NULL;
     const unsigned long parsed = strtoul(digits, &end, 10);
-    if (end == digits || parsed == 0 || parsed > MAX_TURN_SAMPLES
+    if (end == digits || parsed == 0 || parsed > maximum
             || (*end != ',' && *end != '}')) {
         return false;
     }
@@ -426,7 +430,10 @@ static void handle_control_payload(network_relay_t *relay,
             xEventGroupSetBits(relay->events, SOCKET_RESTART_BIT);
             return;
         }
+        const bool buffered = mode_openai && strstr(
+            relay->control_rx, "\"playback\":\"buffered\"") != NULL;
         atomic_store(&relay->generated_output_mode, mode_openai);
+        atomic_store(&relay->buffered_output_mode, buffered);
         xEventGroupSetBits(relay->events, SOCKET_READY_BIT);
         set_state(relay, NETWORK_RELAY_READY);
         ESP_LOGI(TAG, "Relay protocol epoch=%u ready", epoch);
@@ -438,10 +445,14 @@ static void handle_control_payload(network_relay_t *relay,
             relay->control_rx, "\"inputSamples\":") != NULL;
         const bool counts_valid = generated_counts
             ? control_named_count(
-                  relay, "inputSamples", &input_samples)
+                  relay, "inputSamples", MAX_INPUT_TURN_SAMPLES,
+                  &input_samples)
                 && control_named_count(
-                    relay, "outputSamples", &output_samples)
-            : control_named_count(relay, "samples", &input_samples);
+                    relay, "outputSamples", MAX_OUTPUT_TURN_SAMPLES,
+                    &output_samples)
+            : control_named_count(
+                  relay, "samples", MAX_INPUT_TURN_SAMPLES,
+                  &input_samples);
         if (!generated_counts) {
             output_samples = input_samples;
         }
@@ -545,7 +556,8 @@ static void handle_audio_payload(network_relay_t *relay, uint32_t epoch,
             if (!emit_output_event(
                     relay, NETWORK_RELAY_OUTPUT_AUDIO, token,
                     (const int16_t *)&bytes[AUDIO_HEADER_BYTES],
-                    sample_count, 0, 0)) {
+                    sample_count, 0,
+                    atomic_load(&relay->buffered_output_mode) ? 1U : 0U)) {
                 invalidate_output_turn(relay, false);
             }
         } else {
@@ -1340,6 +1352,7 @@ esp_err_t network_relay_create(network_relay_t **out_relay)
     atomic_init(&relay->next_output_sequence, 0);
     atomic_init(&relay->output_turn_active, false);
     atomic_init(&relay->generated_output_mode, false);
+    atomic_init(&relay->buffered_output_mode, false);
     atomic_init(&relay->telemetry_dirty, true);
     relay->snapshot.state = NETWORK_RELAY_DISABLED;
     relay->snapshot.active_network = -1;
@@ -1593,7 +1606,8 @@ bool network_relay_report_playback(network_relay_t *relay,
                                    size_t sample_count)
 {
     if (relay == NULL || relay->stream_queue == NULL || turn_token == 0
-            || sample_count == 0 || sample_count > MAX_TURN_SAMPLES
+            || sample_count == 0
+            || sample_count > MAX_OUTPUT_TURN_SAMPLES
             || (xEventGroupGetBits(relay->events) & SOCKET_READY_BIT) == 0
             || xSemaphoreTake(relay->stream_mutex, 0) != pdTRUE) {
         return false;

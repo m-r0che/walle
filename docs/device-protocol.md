@@ -16,7 +16,7 @@ Audio is 24 kHz, mono, little-endian PCM16. Each WebSocket binary message is one
 | 10 | 2 | Flags, unsigned little-endian; currently zero |
 | 12 | `samples × 2` | PCM16LE payload |
 
-Frames are limited to 960 samples (40 ms). Input sequence numbers must be contiguous within a turn; the first input frame may use any unsigned 32-bit value. In `echo` mode, kind-2 frames must exactly match expected input sequence/count/hash records. In `openai` mode, generated kind-2 frames use their own contiguous sequence starting at zero; TLS-authenticated relay ownership plus turn/epoch/count bounds replace the echo-only hash equality.
+Frames are limited to 960 samples (40 ms). Input sequence numbers must be contiguous within a turn; the first input frame may use any unsigned 32-bit value. In `echo` mode, kind-2 frames must exactly match expected input sequence/count/hash records. In `openai` mode, generated kind-2 frames use their own contiguous sequence starting at zero; TLS-authenticated relay ownership plus turn/epoch/count bounds replace the echo-only hash equality. `playback:"buffered"` explicitly permits the device to begin after its contiguous jitter threshold, before `turn.done`. Before the first codec write, failure retains local fallback; afterward, remote source ownership is irreversible for that turn and failure stops rather than replaying local echo.
 
 ## Control messages
 
@@ -40,7 +40,7 @@ A successful `hello` is required before turns; binary input requires an active t
 ### Relay → device
 
 ```json
-{"v":1,"type":"ready","mode":"openai","sampleRate":24000,"channels":1,"sampleFormat":"pcm16le","sessionEpoch":6}
+{"v":1,"type":"ready","mode":"openai","playback":"buffered","sampleRate":24000,"channels":1,"sampleFormat":"pcm16le","sessionEpoch":6}
 {"v":1,"type":"turn.started","turnId":"..."}
 {"v":1,"type":"turn.done","turnId":"...","frames":287,"inputSamples":73472,"outputSamples":48000}
 {"v":1,"type":"turn.cancelled","turnId":"..."}

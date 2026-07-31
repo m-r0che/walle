@@ -24,6 +24,7 @@ typedef struct {
     size_t read_offset;
     uint32_t turn_token;
     remote_response_status_t status;
+    bool streaming_started;
 } remote_response_t;
 
 /* Initializes an allocation-free response buffer over caller-owned storage. */
@@ -60,7 +61,26 @@ bool remote_response_invalidate(remote_response_t *response,
 bool remote_response_cancel(remote_response_t *response,
                             uint32_t turn_token);
 
-/* Reads only a complete response; consuming the final sample resets it. */
+/*
+ * Commits a receiving response to buffered streaming after the requested
+ * contiguous jitter threshold is present. Once true, local echo must not be
+ * selected for this turn.
+ */
+bool remote_response_start_streaming(remote_response_t *response,
+                                     uint32_t turn_token,
+                                     size_t minimum_buffered_samples);
+bool remote_response_streaming(const remote_response_t *response,
+                               uint32_t turn_token);
+size_t remote_response_unread_samples(const remote_response_t *response,
+                                      uint32_t turn_token);
+bool remote_response_stream_finished(const remote_response_t *response,
+                                     uint32_t turn_token);
+
+/*
+ * Reads a complete response, or a response explicitly committed to buffered
+ * streaming. Complete non-streaming responses reset after the final sample;
+ * streaming responses retain totals until the owner reports or cancels them.
+ */
 size_t remote_response_read(remote_response_t *response, uint32_t turn_token,
                             int16_t *samples, size_t capacity);
 
