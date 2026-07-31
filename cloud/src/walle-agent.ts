@@ -92,7 +92,7 @@ type PendingResponse = {
 
 // Generated output is downlink-only; pace below burst rate while allowing the
 // audio task to drain its bounded event queue between callbacks.
-const OUTPUT_FRAME_PACE_MS = 10;
+const OUTPUT_FRAME_PACE_MS = 20;
 
 type DeviceConnectionState = {
   ready: boolean;
