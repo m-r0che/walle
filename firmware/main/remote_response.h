@@ -42,12 +42,14 @@ bool remote_response_append(remote_response_t *response, uint32_t turn_token,
                             const int16_t *samples, size_t sample_count);
 
 /*
- * Makes the response readable only when buffered, relay-reported, and local
- * capture sample counts are identical and nonzero. A mismatch invalidates it.
+ * Makes the response readable only when buffered output equals relay-reported
+ * output and relay-reported input equals authoritative local capture. Input and
+ * output durations may differ. Any mismatch invalidates the response.
  */
 bool remote_response_complete(remote_response_t *response,
                               uint32_t turn_token,
-                              size_t relay_reported_samples,
+                              size_t relay_output_samples,
+                              size_t relay_input_samples,
                               size_t local_capture_samples);
 
 /* Invalidates the matching turn after timeout, queue loss, or protocol error. */

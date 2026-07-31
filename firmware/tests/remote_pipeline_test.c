@@ -28,7 +28,8 @@ static void drain(pipeline_t *pipeline)
             case REMOTE_EVENT_DONE:
                 remote_response_complete(
                     &pipeline->response, event->turn_token,
-                    event->value_count, pipeline->local_samples);
+                    event->value_count, event->input_count,
+                    pipeline->local_samples);
                 break;
             case REMOTE_EVENT_CANCELLED:
                 remote_response_cancel(
@@ -75,13 +76,14 @@ static void test_exact_complete_turn_becomes_remote_playback(void)
         fill(frame, count, sent);
         assert(remote_event_queue_try_push(
             &pipeline.queue, REMOTE_EVENT_AUDIO,
-            pipeline.active_token, frame, count, 0));
+            pipeline.active_token, frame, count, 0, 0));
         drain(&pipeline);
         sent += count;
     }
     assert(remote_event_queue_try_push(
         &pipeline.queue, REMOTE_EVENT_DONE, pipeline.active_token,
-        NULL, 0, (uint32_t)pipeline.local_samples));
+        NULL, 0, (uint32_t)pipeline.local_samples,
+        (uint32_t)pipeline.local_samples));
     drain(&pipeline);
 
     assert(remote_response_select(
@@ -102,6 +104,32 @@ static void test_exact_complete_turn_becomes_remote_playback(void)
     assert(played == pipeline.local_samples);
 }
 
+static void test_generated_output_duration_may_differ_from_input(void)
+{
+    int16_t response_storage[960];
+    remote_event_t event_storage[3];
+    pipeline_t pipeline = {
+        .active_token = 4,
+        .local_samples = 1920,
+    };
+    int16_t frame[960] = {0};
+    assert(remote_response_init(
+        &pipeline.response, response_storage,
+        ARRAY_SIZE(response_storage)));
+    assert(remote_event_queue_init(
+        &pipeline.queue, event_storage, ARRAY_SIZE(event_storage)));
+    assert(remote_response_begin(&pipeline.response, pipeline.active_token));
+    assert(remote_event_queue_try_push(
+        &pipeline.queue, REMOTE_EVENT_AUDIO, 4,
+        frame, ARRAY_SIZE(frame), 0, 0));
+    assert(remote_event_queue_try_push(
+        &pipeline.queue, REMOTE_EVENT_DONE, 4, NULL, 0,
+        ARRAY_SIZE(frame), (uint32_t)pipeline.local_samples));
+    drain(&pipeline);
+    assert(remote_response_status(&pipeline.response, 4)
+           == REMOTE_RESPONSE_READY);
+}
+
 static void test_missing_frame_falls_back_without_partial_remote(void)
 {
     int16_t response_storage[1920];
@@ -120,10 +148,11 @@ static void test_missing_frame_falls_back_without_partial_remote(void)
 
     assert(remote_event_queue_try_push(
         &pipeline.queue, REMOTE_EVENT_AUDIO, 2,
-        frame, ARRAY_SIZE(frame), 0));
+        frame, ARRAY_SIZE(frame), 0, 0));
     assert(remote_event_queue_try_push(
         &pipeline.queue, REMOTE_EVENT_DONE, 2,
-        NULL, 0, (uint32_t)pipeline.local_samples));
+        NULL, 0, (uint32_t)pipeline.local_samples,
+        (uint32_t)pipeline.local_samples));
     drain(&pipeline);
     assert(remote_response_status(&pipeline.response, 2)
            == REMOTE_RESPONSE_INVALID);
@@ -152,13 +181,13 @@ static void test_queue_overflow_times_out_to_local(void)
 
     assert(remote_event_queue_try_push(
         &pipeline.queue, REMOTE_EVENT_AUDIO, 3,
-        frame, ARRAY_SIZE(frame), 0));
+        frame, ARRAY_SIZE(frame), 0, 0));
     assert(remote_event_queue_try_push(
         &pipeline.queue, REMOTE_EVENT_AUDIO, 3,
-        frame, ARRAY_SIZE(frame), 0));
+        frame, ARRAY_SIZE(frame), 0, 0));
     assert(!remote_event_queue_try_push(
         &pipeline.queue, REMOTE_EVENT_AUDIO, 3,
-        frame, ARRAY_SIZE(frame), 0));
+        frame, ARRAY_SIZE(frame), 0, 0));
     drain(&pipeline);
 
     assert(remote_response_select(
@@ -174,6 +203,7 @@ static void test_queue_overflow_times_out_to_local(void)
 int main(void)
 {
     test_exact_complete_turn_becomes_remote_playback();
+    test_generated_output_duration_may_differ_from_input();
     test_missing_frame_falls_back_without_partial_remote();
     test_queue_overflow_times_out_to_local();
     puts("remote_pipeline_test: PASS");

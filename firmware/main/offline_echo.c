@@ -29,7 +29,7 @@
 #define PRECOMMIT_RING_MS 220
 #define PLAYBACK_RING_MS 500
 #define PREPARE_DELAY_MS 220
-#define REMOTE_RESPONSE_DEADLINE_MS 500
+#define REMOTE_RESPONSE_DEADLINE_MS 6000
 #define REMOTE_EVENT_STORAGE_COUNT 33
 #define DEFAULT_OUTPUT_VOLUME_PERCENT 20
 #define MIN_OUTPUT_VOLUME_PERCENT 10
@@ -179,7 +179,8 @@ static void process_remote_events(offline_echo_t *echo)
             case REMOTE_EVENT_DONE:
                 accepted = remote_response_complete(
                     &echo->remote_response, event->turn_token,
-                    event->value_count, echo->recorded_samples);
+                    event->value_count, event->input_count,
+                    echo->recorded_samples);
                 break;
             case REMOTE_EVENT_CANCELLED:
                 remote_response_cancel(&echo->remote_response,
@@ -931,7 +932,8 @@ bool offline_echo_receive_remote(offline_echo_t *echo,
                                  uint32_t turn_token,
                                  const int16_t *samples,
                                  size_t sample_count,
-                                 uint32_t value_count)
+                                 uint32_t value_count,
+                                 uint32_t input_count)
 {
     if (echo == NULL || event < OFFLINE_ECHO_REMOTE_AUDIO
             || event > OFFLINE_ECHO_REMOTE_INVALID) {
@@ -939,7 +941,7 @@ bool offline_echo_receive_remote(offline_echo_t *echo,
     }
     const bool queued = remote_event_queue_try_push(
         &echo->remote_events, (remote_event_type_t)event, turn_token,
-        samples, sample_count, value_count);
+        samples, sample_count, value_count, input_count);
     if (!queued) {
         portENTER_CRITICAL(&echo->snapshot_lock);
         echo->snapshot.remote_event_drops++;

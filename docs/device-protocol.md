@@ -40,10 +40,12 @@ A successful `hello` is required before turns; binary input requires an active t
 ```json
 {"v":1,"type":"ready","mode":"echo","sampleRate":24000,"channels":1,"sampleFormat":"pcm16le","sessionEpoch":6}
 {"v":1,"type":"turn.started","turnId":"..."}
-{"v":1,"type":"turn.done","turnId":"...","frames":287,"samples":73472}
+{"v":1,"type":"turn.done","turnId":"...","frames":287,"inputSamples":73472,"outputSamples":48000}
 {"v":1,"type":"turn.cancelled","turnId":"..."}
 {"v":1,"type":"pong","nonce":"..."}
 ```
+
+`inputSamples` must match the complete committed device input; `outputSamples` must match the complete binary output stream and may differ in duration. Echo-era firmware also accepts the legacy single `samples` field as both counts. Remote PCM remains unreadable unless relay input matches authoritative local capture and buffered output matches relay output.
 
 Malformed or out-of-order messages close the socket with application code `4002`. A newer connection to the same installation replaces the old socket with code `4009`. `sessionEpoch` is positive, increases for every device-side client recreation, and must match in `hello`/`ready`; queued items from older epochs are discarded. The device sends nonce-checked application heartbeats and recreates the client after a missing pong or bounded session lifetime. During bring-up, authenticated `GET /v1/debug/last-turn` returns connection state and aggregate counts for the latest turn; PCM is never retained or returned.
 

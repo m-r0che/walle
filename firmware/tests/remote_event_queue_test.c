@@ -23,14 +23,14 @@ static void test_audio_and_control_validation(void)
     assert(!remote_event_queue_init(&queue, storage, 1));
     assert(remote_event_queue_init(&queue, storage, ARRAY_SIZE(storage)));
     assert(!remote_event_queue_try_push(
-        &queue, REMOTE_EVENT_AUDIO, 0, samples, 1, 0));
+        &queue, REMOTE_EVENT_AUDIO, 0, samples, 1, 0, 0));
     assert(!remote_event_queue_try_push(
-        &queue, REMOTE_EVENT_AUDIO, 1, NULL, 1, 0));
+        &queue, REMOTE_EVENT_AUDIO, 1, NULL, 1, 0, 0));
     assert(!remote_event_queue_try_push(
-        &queue, REMOTE_EVENT_DONE, 1, samples, 1, 1));
+        &queue, REMOTE_EVENT_DONE, 1, samples, 1, 1, 1));
 
     assert(remote_event_queue_try_push(
-        &queue, REMOTE_EVENT_AUDIO, 5, samples, ARRAY_SIZE(samples), 0));
+        &queue, REMOTE_EVENT_AUDIO, 5, samples, ARRAY_SIZE(samples), 0, 0));
     const remote_event_t *event = remote_event_queue_peek(&queue);
     assert(event != NULL);
     assert(event->type == REMOTE_EVENT_AUDIO);
@@ -42,10 +42,11 @@ static void test_audio_and_control_validation(void)
     assert(remote_event_queue_consume(&queue));
 
     assert(remote_event_queue_try_push(
-        &queue, REMOTE_EVENT_DONE, 5, NULL, 0, 960));
+        &queue, REMOTE_EVENT_DONE, 5, NULL, 0, 960, 1920));
     event = remote_event_queue_peek(&queue);
     assert(event != NULL && event->type == REMOTE_EVENT_DONE);
     assert(event->value_count == 960);
+    assert(event->input_count == 1920);
     assert(remote_event_queue_consume(&queue));
     assert(remote_event_queue_peek(&queue) == NULL);
     assert(!remote_event_queue_consume(&queue));
@@ -59,11 +60,12 @@ static void test_capacity_wrap_and_fifo_order(void)
 
     for (uint32_t token = 1; token <= 4; token++) {
         assert(remote_event_queue_try_push(
-            &queue, REMOTE_EVENT_DONE, token, NULL, 0, token * 10));
+            &queue, REMOTE_EVENT_DONE, token, NULL, 0,
+            token * 10, 0));
     }
     assert(remote_event_queue_count(&queue) == 4);
     assert(!remote_event_queue_try_push(
-        &queue, REMOTE_EVENT_DONE, 5, NULL, 0, 50));
+        &queue, REMOTE_EVENT_DONE, 5, NULL, 0, 50, 0));
 
     for (uint32_t token = 1; token <= 2; token++) {
         const remote_event_t *event = remote_event_queue_peek(&queue);
@@ -72,7 +74,8 @@ static void test_capacity_wrap_and_fifo_order(void)
     }
     for (uint32_t token = 5; token <= 6; token++) {
         assert(remote_event_queue_try_push(
-            &queue, REMOTE_EVENT_DONE, token, NULL, 0, token * 10));
+            &queue, REMOTE_EVENT_DONE, token, NULL, 0,
+            token * 10, 0));
     }
     for (uint32_t token = 3; token <= 6; token++) {
         const remote_event_t *event = remote_event_queue_peek(&queue);
@@ -89,7 +92,7 @@ static void test_reset_discards_queued_events(void)
     remote_event_queue_t queue;
     assert(remote_event_queue_init(&queue, storage, ARRAY_SIZE(storage)));
     assert(remote_event_queue_try_push(
-        &queue, REMOTE_EVENT_INVALID, 9, NULL, 0, 0));
+        &queue, REMOTE_EVENT_INVALID, 9, NULL, 0, 0, 0));
     remote_event_queue_reset(&queue);
     assert(remote_event_queue_count(&queue) == 0);
     assert(remote_event_queue_peek(&queue) == NULL);
@@ -112,7 +115,7 @@ static void *produce_events(void *argument)
         const int16_t sample = (int16_t)sequence;
         while (!remote_event_queue_try_push(
                     context->queue, REMOTE_EVENT_AUDIO, sequence,
-                    &sample, 1, sequence)) {
+                    &sample, 1, sequence, 0)) {
             sched_yield();
         }
     }

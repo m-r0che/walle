@@ -353,7 +353,8 @@ export class WalleAgent extends Agent<Env> {
           type: "turn.done",
           turnId: message.turnId,
           frames: committed?.frames ?? 0,
-          samples: reportedSamples,
+          inputSamples: committedSamples,
+          outputSamples: reportedSamples,
         });
         console.log(JSON.stringify({
           event: "device.turn_echo",

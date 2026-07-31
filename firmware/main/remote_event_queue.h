@@ -18,6 +18,7 @@ typedef struct {
     remote_event_type_t type;
     uint32_t turn_token;
     uint32_t value_count;
+    uint32_t input_count;
     uint16_t sample_count;
     int16_t samples[REMOTE_EVENT_MAX_SAMPLES];
 } remote_event_t;
@@ -43,7 +44,8 @@ bool remote_event_queue_try_push(remote_event_queue_t *queue,
                                  uint32_t turn_token,
                                  const int16_t *samples,
                                  size_t sample_count,
-                                 uint32_t value_count);
+                                 uint32_t value_count,
+                                 uint32_t input_count);
 
 /*
  * Returns the next immutable event in place. It remains valid until consume;

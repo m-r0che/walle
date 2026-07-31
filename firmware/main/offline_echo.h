@@ -88,7 +88,8 @@ bool offline_echo_receive_remote(offline_echo_t *echo,
                                  uint32_t turn_token,
                                  const int16_t *samples,
                                  size_t sample_count,
-                                 uint32_t value_count);
+                                 uint32_t value_count,
+                                 uint32_t input_count);
 
 /** Start capturing a new phrase. Returns ESP_ERR_INVALID_STATE when muted/busy. */
 esp_err_t offline_echo_record_start(offline_echo_t *echo);

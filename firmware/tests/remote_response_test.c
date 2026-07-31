@@ -26,7 +26,7 @@ static void test_complete_response_requires_three_matching_counts(void)
     assert(remote_response_append(&response, 7, first, ARRAY_SIZE(first)));
     assert(remote_response_append(&response, 7, second, ARRAY_SIZE(second)));
     assert(remote_response_sample_count(&response, 7) == 2000);
-    assert(remote_response_complete(&response, 7, 2000, 2000));
+    assert(remote_response_complete(&response, 7, 2000, 2000, 2000));
     assert(remote_response_status(&response, 7) == REMOTE_RESPONSE_READY);
 
     int16_t output[333];
@@ -46,6 +46,18 @@ static void test_complete_response_requires_three_matching_counts(void)
     assert(remote_response_status(&response, 7) == REMOTE_RESPONSE_EMPTY);
 }
 
+static void test_generated_output_may_differ_from_input_duration(void)
+{
+    int16_t storage[16];
+    int16_t samples[6] = {1, 2, 3, 4, 5, 6};
+    remote_response_t response;
+    assert(remote_response_init(&response, storage, ARRAY_SIZE(storage)));
+    assert(remote_response_begin(&response, 8));
+    assert(remote_response_append(&response, 8, samples, 6));
+    assert(remote_response_complete(&response, 8, 6, 10, 10));
+    assert(remote_response_status(&response, 8) == REMOTE_RESPONSE_READY);
+}
+
 static void test_count_mismatch_invalidates_response(void)
 {
     int16_t storage[16];
@@ -55,14 +67,14 @@ static void test_count_mismatch_invalidates_response(void)
 
     assert(remote_response_begin(&response, 10));
     assert(remote_response_append(&response, 10, samples, 8));
-    assert(!remote_response_complete(&response, 10, 7, 8));
+    assert(!remote_response_complete(&response, 10, 7, 8, 8));
     assert(remote_response_status(&response, 10)
            == REMOTE_RESPONSE_INVALID);
     assert(remote_response_read(&response, 10, samples, 8) == 0);
 
     assert(remote_response_begin(&response, 11));
     assert(remote_response_append(&response, 11, samples, 8));
-    assert(!remote_response_complete(&response, 11, 8, 9));
+    assert(!remote_response_complete(&response, 11, 8, 8, 9));
     assert(remote_response_status(&response, 11)
            == REMOTE_RESPONSE_INVALID);
 }
@@ -91,14 +103,14 @@ static void test_stale_events_do_not_damage_current_turn(void)
     assert(remote_response_begin(&response, 20));
 
     assert(!remote_response_append(&response, 19, samples, 4));
-    assert(!remote_response_complete(&response, 19, 0, 0));
+    assert(!remote_response_complete(&response, 19, 0, 0, 0));
     assert(!remote_response_invalidate(&response, 19));
     assert(!remote_response_cancel(&response, 19));
     assert(remote_response_status(&response, 20)
            == REMOTE_RESPONSE_RECEIVING);
 
     assert(remote_response_append(&response, 20, samples, 4));
-    assert(remote_response_complete(&response, 20, 4, 4));
+    assert(remote_response_complete(&response, 20, 4, 4, 4));
     assert(remote_response_status(&response, 20) == REMOTE_RESPONSE_READY);
 }
 
@@ -137,7 +149,7 @@ static void test_source_selection_is_bounded_and_complete_only(void)
     assert(remote_response_select(&response, 35, true, 1250, 1250, 1500)
            == REMOTE_RESPONSE_WAIT);
     assert(remote_response_append(&response, 35, samples, 4));
-    assert(remote_response_complete(&response, 35, 4, 4));
+    assert(remote_response_complete(&response, 35, 4, 4, 4));
     assert(remote_response_select(&response, 35, true, 1300, 1250, 1500)
            == REMOTE_RESPONSE_USE_REMOTE);
 
@@ -178,6 +190,7 @@ static void test_invalid_configuration_and_new_turn_reset(void)
 int main(void)
 {
     test_complete_response_requires_three_matching_counts();
+    test_generated_output_may_differ_from_input_duration();
     test_count_mismatch_invalidates_response();
     test_overflow_invalidates_without_partial_playback();
     test_stale_events_do_not_damage_current_turn();

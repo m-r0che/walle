@@ -152,6 +152,7 @@ struct network_relay {
     atomic_uint heartbeat_nonce;
     atomic_uint active_output_token;
     atomic_uint completed_output_token;
+    atomic_uint output_input_samples;
     atomic_bool output_turn_active;
     uint32_t epoch_counter;
     uint32_t stream_turn_epoch;
@@ -251,6 +252,7 @@ static void reset_stream_state(network_relay_t *relay)
     atomic_store(&relay->output_turn_active, false);
     atomic_store(&relay->active_output_token, 0);
     atomic_store(&relay->completed_output_token, 0);
+    atomic_store(&relay->output_input_samples, 0);
     pcm_batcher_abort(&relay->pcm_batcher);
     xQueueReset(relay->stream_queue);
     xSemaphoreGive(relay->stream_mutex);
@@ -293,7 +295,8 @@ static bool emit_output_event(network_relay_t *relay,
                               uint32_t turn_token,
                               const int16_t *samples,
                               size_t sample_count,
-                              uint32_t value_count)
+                              uint32_t value_count,
+                              uint32_t input_count)
 {
     network_relay_output_sink_t sink;
     void *context;
@@ -303,7 +306,7 @@ static bool emit_output_event(network_relay_t *relay,
     portEXIT_CRITICAL(&relay->stream_lock);
     if (sink == NULL || turn_token == 0
             || !sink(context, event, turn_token, samples,
-                     sample_count, value_count)) {
+                     sample_count, value_count, input_count)) {
         increment_counter(relay,
                           &relay->snapshot.output_events_dropped);
         return false;
@@ -324,9 +327,10 @@ static void invalidate_output_turn(network_relay_t *relay, bool notify)
     const uint32_t token = atomic_exchange(
         &relay->active_output_token, 0);
     atomic_store(&relay->completed_output_token, 0);
+    atomic_store(&relay->output_input_samples, 0);
     if (active && notify) {
         emit_output_event(relay, NETWORK_RELAY_OUTPUT_INVALID,
-                          token, NULL, 0, 0);
+                          token, NULL, 0, 0, 0);
     }
 }
 
@@ -347,19 +351,24 @@ static bool control_matches_output_turn(network_relay_t *relay)
         && strstr(relay->control_rx, expected) != NULL;
 }
 
-static bool control_sample_count(network_relay_t *relay,
-                                 uint32_t *sample_count)
+static bool control_named_count(network_relay_t *relay,
+                                const char *name,
+                                uint32_t *sample_count)
 {
-    const char *field = strstr(relay->control_rx, "\"samples\":");
+    char label[32];
+    const int label_length = snprintf(
+        label, sizeof(label), "\"%s\":", name);
+    if (label_length <= 0 || label_length >= (int)sizeof(label)) {
+        return false;
+    }
+    const char *field = strstr(relay->control_rx, label);
     if (field == NULL) {
         return false;
     }
+    const char *digits = field + label_length;
     char *end = NULL;
-    const unsigned long parsed = strtoul(
-        field + strlen("\"samples\":"), &end, 10);
-    if (end == field + strlen("\"samples\":")
-            || parsed == 0
-            || parsed > MAX_TURN_SAMPLES
+    const unsigned long parsed = strtoul(digits, &end, 10);
+    if (end == digits || parsed == 0 || parsed > MAX_TURN_SAMPLES
             || (*end != ',' && *end != '}')) {
         return false;
     }
@@ -406,9 +415,22 @@ static void handle_control_payload(network_relay_t *relay,
         ESP_LOGI(TAG, "Relay protocol epoch=%u ready", epoch);
     } else if (strstr(relay->control_rx,
                       "\"type\":\"turn.done\"") != NULL) {
-        uint32_t reported_samples = 0;
-        if (!control_matches_output_turn(relay)
-                || !control_sample_count(relay, &reported_samples)) {
+        uint32_t input_samples = 0;
+        uint32_t output_samples = 0;
+        const bool generated_counts = strstr(
+            relay->control_rx, "\"inputSamples\":") != NULL;
+        const bool counts_valid = generated_counts
+            ? control_named_count(
+                  relay, "inputSamples", &input_samples)
+                && control_named_count(
+                    relay, "outputSamples", &output_samples)
+            : control_named_count(relay, "samples", &input_samples);
+        if (!generated_counts) {
+            output_samples = input_samples;
+        }
+        if (!control_matches_output_turn(relay) || !counts_valid
+                || input_samples != atomic_load(
+                    &relay->output_input_samples)) {
             increment_counter(relay, &relay->snapshot.protocol_errors);
             invalidate_output_turn(relay, true);
             return;
@@ -418,7 +440,8 @@ static void handle_control_payload(network_relay_t *relay,
         atomic_store(&relay->output_turn_active, false);
         atomic_store(&relay->completed_output_token, token);
         emit_output_event(relay, NETWORK_RELAY_OUTPUT_DONE,
-                          token, NULL, 0, reported_samples);
+                          token, NULL, 0, output_samples,
+                          input_samples);
     } else if (strstr(relay->control_rx,
                       "\"type\":\"turn.cancelled\"") != NULL) {
         if (!control_matches_output_turn(relay)) {
@@ -430,7 +453,7 @@ static void handle_control_payload(network_relay_t *relay,
         atomic_store(&relay->output_turn_active, false);
         atomic_store(&relay->completed_output_token, 0);
         emit_output_event(relay, NETWORK_RELAY_OUTPUT_CANCELLED,
-                          token, NULL, 0, 0);
+                          token, NULL, 0, 0, 0);
     } else if (strstr(relay->control_rx, "\"type\":\"pong\"") != NULL) {
         char expected[48];
         const unsigned nonce = atomic_load(&relay->heartbeat_nonce);
@@ -494,7 +517,7 @@ static void handle_audio_payload(network_relay_t *relay, uint32_t epoch,
             if (!emit_output_event(
                     relay, NETWORK_RELAY_OUTPUT_AUDIO, token,
                     (const int16_t *)&bytes[AUDIO_HEADER_BYTES],
-                    sample_count, 0)) {
+                    sample_count, 0, 0)) {
                 invalidate_output_turn(relay, false);
             }
         } else {
@@ -828,6 +851,8 @@ static bool send_audio_frame(void *context, const int16_t *samples,
         relay->websocket, (const char *)frame, frame_bytes,
         pdMS_TO_TICKS(2000));
     if (written == frame_bytes) {
+        atomic_fetch_add(&relay->output_input_samples,
+                         (uint32_t)sample_count);
         increment_counter(relay, &relay->snapshot.audio_frames_sent);
         return true;
     }
@@ -877,6 +902,7 @@ static void service_stream_queue(network_relay_t *relay)
                 memcpy(relay->output_turn_id, relay->active_turn_id,
                        sizeof(relay->output_turn_id));
                 portEXIT_CRITICAL(&relay->stream_lock);
+                atomic_store(&relay->output_input_samples, 0);
                 atomic_store(&relay->active_output_token,
                              item.turn_token);
                 atomic_store(&relay->output_turn_active, true);
@@ -1206,6 +1232,7 @@ esp_err_t network_relay_create(network_relay_t **out_relay)
     atomic_init(&relay->heartbeat_nonce, 0);
     atomic_init(&relay->active_output_token, 0);
     atomic_init(&relay->completed_output_token, 0);
+    atomic_init(&relay->output_input_samples, 0);
     atomic_init(&relay->output_turn_active, false);
     relay->snapshot.state = NETWORK_RELAY_DISABLED;
     relay->snapshot.active_network = -1;

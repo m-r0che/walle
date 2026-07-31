@@ -28,7 +28,8 @@ typedef bool (*network_relay_output_sink_t)(
     uint32_t turn_token,
     const int16_t *samples,
     size_t sample_count,
-    uint32_t value_count);
+    uint32_t value_count,
+    uint32_t input_count);
 
 typedef enum {
     NETWORK_RELAY_DISABLED = 0,

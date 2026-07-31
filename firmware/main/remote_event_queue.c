@@ -27,7 +27,8 @@ bool remote_event_queue_try_push(remote_event_queue_t *queue,
                                  uint32_t turn_token,
                                  const int16_t *samples,
                                  size_t sample_count,
-                                 uint32_t value_count)
+                                 uint32_t value_count,
+                                 uint32_t input_count)
 {
     if (!configured(queue) || type < REMOTE_EVENT_AUDIO
             || type > REMOTE_EVENT_INVALID || turn_token == 0
@@ -50,6 +51,7 @@ bool remote_event_queue_try_push(remote_event_queue_t *queue,
     event->type = type;
     event->turn_token = turn_token;
     event->value_count = value_count;
+    event->input_count = input_count;
     event->sample_count = (uint16_t)sample_count;
     if (sample_count > 0) {
         memcpy(event->samples, samples, sample_count * sizeof(*samples));

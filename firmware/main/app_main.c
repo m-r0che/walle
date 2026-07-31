@@ -274,7 +274,8 @@ static bool handle_committed_audio_stream(
 static bool handle_remote_output(
     void *opaque_context, network_relay_output_event_t event,
     uint32_t turn_token, const int16_t *samples,
-    size_t sample_count, uint32_t value_count)
+    size_t sample_count, uint32_t value_count,
+    uint32_t input_count)
 {
     app_context_t *context = opaque_context;
     if (context == NULL || context->echo == NULL) {
@@ -299,7 +300,7 @@ static bool handle_remote_output(
     }
     return offline_echo_receive_remote(
         context->echo, remote_event, turn_token, samples,
-        sample_count, value_count);
+        sample_count, value_count, input_count);
 }
 
 static face_interaction_t interaction_for_audio(offline_echo_state_t state)

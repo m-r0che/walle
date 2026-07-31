@@ -66,7 +66,8 @@ bool remote_response_append(remote_response_t *response, uint32_t turn_token,
 
 bool remote_response_complete(remote_response_t *response,
                               uint32_t turn_token,
-                              size_t relay_reported_samples,
+                              size_t relay_output_samples,
+                              size_t relay_input_samples,
                               size_t local_capture_samples)
 {
     if (!configured(response) || turn_token == 0
@@ -75,8 +76,9 @@ bool remote_response_complete(remote_response_t *response,
         return false;
     }
     if (response->sample_count == 0
-            || response->sample_count != relay_reported_samples
-            || response->sample_count != local_capture_samples) {
+            || relay_input_samples == 0
+            || response->sample_count != relay_output_samples
+            || relay_input_samples != local_capture_samples) {
         clear_turn(response, REMOTE_RESPONSE_INVALID);
         return false;
     }
