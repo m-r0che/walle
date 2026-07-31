@@ -21,7 +21,9 @@ Any failure leaves the existing local capture available for playback. Partial re
 
 `remote_response` is an allocation-free complete-turn buffer over caller-owned storage. Its interface hides token isolation, bounded append, three-way sample-count validation, overflow/mismatch invalidation, cancellation, and readout gating. Stale-token events are rejected without damaging the current response. A new turn atomically discards older state.
 
-The intended production adapter will allocate six seconds of PCM storage in PSRAM. WebSocket callbacks will copy already-validated frames into a bounded zero-wait event queue; only the audio task will mutate `remote_response`, choose remote versus local source, and write the codec.
+The intended production adapter will allocate six seconds of PCM storage in PSRAM. `remote_event_queue` is a bounded allocation-free single-producer/single-consumer seam between the WebSocket event task and audio task. The producer copies already-validated frames directly into caller-owned slots and publishes them with release/acquire ordering; the consumer peeks in place, avoiding a second 1,920-byte copy and a large stack object. Only the audio task will mutate `remote_response`, choose remote versus local source, and write the codec.
+
+`remote_response_select` centralizes timing policy: it preserves the authored minimum thinking interval, chooses only a complete response, waits no longer than the response deadline, invalidates an expired partial response, and otherwise selects local fallback.
 
 ## Off-device evidence
 
@@ -33,6 +35,13 @@ cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
   firmware/main/remote_response.c firmware/tests/remote_response_test.c \
   -o /tmp/remote_response_test
 /tmp/remote_response_test
+
+cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
+  -fno-omit-frame-pointer -pthread -Ifirmware/main \
+  firmware/main/remote_event_queue.c \
+  firmware/tests/remote_event_queue_test.c \
+  -o /tmp/remote_event_queue_test
+/tmp/remote_event_queue_test
 ```
 
 Covered behavior:
@@ -43,8 +52,11 @@ Covered behavior:
 - stale append/complete/invalidate/cancel isolation;
 - timeout invalidation and explicit cancellation;
 - new-turn replacement and invalid configuration;
+- earliest-playback, completion, and exact deadline source selection;
+- event validation, bounded-full rejection, wraparound, FIFO order, and reset;
+- 100,000-event concurrent producer/consumer stress;
 - ASan/UBSan execution.
 
 ## Next controlled step
 
-Integrate the module on this branch without changing the validated 256-sample codec cadence, 960-sample network batching, display path, or local rings. Before any flash, add host tests for the bounded callback-to-audio queue and response deadline/source selector. The first hardware candidate will retain echo mode and must pass local-fallback cases before any OpenAI connection is introduced.
+Integrate both modules on this branch without changing the validated 256-sample codec cadence, 960-sample network batching, display path, or local rings. The first hardware candidate will retain echo mode and must pass exact remote playback plus timeout, mismatch, overflow, cancellation, reconnect, and local-fallback cases before any OpenAI connection is introduced.

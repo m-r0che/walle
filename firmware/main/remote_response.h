@@ -11,6 +11,12 @@ typedef enum {
     REMOTE_RESPONSE_INVALID,
 } remote_response_status_t;
 
+typedef enum {
+    REMOTE_RESPONSE_WAIT = 0,
+    REMOTE_RESPONSE_USE_LOCAL,
+    REMOTE_RESPONSE_USE_REMOTE,
+} remote_response_decision_t;
+
 typedef struct {
     int16_t *storage;
     size_t capacity;
@@ -55,6 +61,16 @@ bool remote_response_cancel(remote_response_t *response,
 /* Reads only a complete response; consuming the final sample resets it. */
 size_t remote_response_read(remote_response_t *response, uint32_t turn_token,
                             int16_t *samples, size_t capacity);
+
+/*
+ * Selects a complete remote response after the authored minimum thinking time,
+ * waits only until the bounded deadline, and otherwise chooses local fallback.
+ * Timing values are monotonic milliseconds for the same turn.
+ */
+remote_response_decision_t remote_response_select(
+    remote_response_t *response, uint32_t turn_token,
+    bool remote_attempted, int64_t now_ms,
+    int64_t earliest_playback_ms, int64_t response_deadline_ms);
 
 remote_response_status_t remote_response_status(
     const remote_response_t *response, uint32_t turn_token);

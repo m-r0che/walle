@@ -124,6 +124,38 @@ static void test_timeout_and_cancel_never_make_audio_readable(void)
     assert(remote_response_read(&response, 31, samples, 4) == 0);
 }
 
+static void test_source_selection_is_bounded_and_complete_only(void)
+{
+    int16_t storage[8];
+    int16_t samples[4] = {1, 2, 3, 4};
+    remote_response_t response;
+    assert(remote_response_init(&response, storage, ARRAY_SIZE(storage)));
+    assert(remote_response_begin(&response, 35));
+
+    assert(remote_response_select(&response, 35, true, 1249, 1250, 1500)
+           == REMOTE_RESPONSE_WAIT);
+    assert(remote_response_select(&response, 35, true, 1250, 1250, 1500)
+           == REMOTE_RESPONSE_WAIT);
+    assert(remote_response_append(&response, 35, samples, 4));
+    assert(remote_response_complete(&response, 35, 4, 4));
+    assert(remote_response_select(&response, 35, true, 1300, 1250, 1500)
+           == REMOTE_RESPONSE_USE_REMOTE);
+
+    assert(remote_response_begin(&response, 36));
+    assert(remote_response_select(&response, 36, true, 1499, 1250, 1500)
+           == REMOTE_RESPONSE_WAIT);
+    assert(remote_response_select(&response, 36, true, 1500, 1250, 1500)
+           == REMOTE_RESPONSE_USE_LOCAL);
+    assert(remote_response_status(&response, 36)
+           == REMOTE_RESPONSE_INVALID);
+
+    assert(remote_response_begin(&response, 37));
+    assert(remote_response_select(&response, 37, false, 1250, 1250, 1500)
+           == REMOTE_RESPONSE_USE_LOCAL);
+    assert(remote_response_select(&response, 99, true, 1250, 1250, 1500)
+           == REMOTE_RESPONSE_USE_LOCAL);
+}
+
 static void test_invalid_configuration_and_new_turn_reset(void)
 {
     int16_t storage[8];
@@ -150,6 +182,7 @@ int main(void)
     test_overflow_invalidates_without_partial_playback();
     test_stale_events_do_not_damage_current_turn();
     test_timeout_and_cancel_never_make_audio_readable();
+    test_source_selection_is_bounded_and_complete_only();
     test_invalid_configuration_and_new_turn_reset();
     puts("remote_response_test: PASS");
     return 0;

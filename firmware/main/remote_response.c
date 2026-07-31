@@ -128,6 +128,32 @@ size_t remote_response_read(remote_response_t *response, uint32_t turn_token,
     return count;
 }
 
+remote_response_decision_t remote_response_select(
+    remote_response_t *response, uint32_t turn_token,
+    bool remote_attempted, int64_t now_ms,
+    int64_t earliest_playback_ms, int64_t response_deadline_ms)
+{
+    if (now_ms < earliest_playback_ms) {
+        return REMOTE_RESPONSE_WAIT;
+    }
+    if (!remote_attempted || !configured(response) || turn_token == 0
+            || response_deadline_ms < earliest_playback_ms
+            || response->turn_token != turn_token) {
+        return REMOTE_RESPONSE_USE_LOCAL;
+    }
+    if (response->status == REMOTE_RESPONSE_READY) {
+        return REMOTE_RESPONSE_USE_REMOTE;
+    }
+    if (response->status != REMOTE_RESPONSE_RECEIVING) {
+        return REMOTE_RESPONSE_USE_LOCAL;
+    }
+    if (now_ms < response_deadline_ms) {
+        return REMOTE_RESPONSE_WAIT;
+    }
+    clear_turn(response, REMOTE_RESPONSE_INVALID);
+    return REMOTE_RESPONSE_USE_LOCAL;
+}
+
 remote_response_status_t remote_response_status(
     const remote_response_t *response, uint32_t turn_token)
 {
