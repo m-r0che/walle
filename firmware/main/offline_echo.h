@@ -15,6 +15,7 @@ typedef enum {
     OFFLINE_ECHO_STREAM_CANCEL,
     OFFLINE_ECHO_STREAM_REMOTE_PLAYED,
     OFFLINE_ECHO_STREAM_LOCAL_FALLBACK,
+    OFFLINE_ECHO_STREAM_RESPONSE_CANCEL,
 } offline_echo_stream_event_t;
 
 typedef bool (*offline_echo_stream_sink_t)(

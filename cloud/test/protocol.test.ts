@@ -104,6 +104,12 @@ describe("control protocol", () => {
 
     expect(decodeControlMessage(JSON.stringify({
       v: 1,
+      type: "response.cancel",
+      turnId: "turn-1",
+    }))).toMatchObject({ type: "response.cancel", turnId: "turn-1" });
+
+    expect(decodeControlMessage(JSON.stringify({
+      v: 1,
       type: "playback.report",
       turnId: "turn-1",
       source: "remote",

@@ -99,6 +99,10 @@ esp_err_t network_relay_set_output_sink(network_relay_t *relay,
                                         network_relay_output_sink_t sink,
                                         void *context);
 
+/** Queue a scoped cancellation for generated output after local timeout. */
+bool network_relay_cancel_response(network_relay_t *relay,
+                                   uint32_t turn_token);
+
 /** Queue aggregate playback-source telemetry after uninterrupted playback. */
 bool network_relay_report_playback(network_relay_t *relay,
                                    uint32_t turn_token,

@@ -102,6 +102,7 @@ typedef enum {
     STREAM_EVENT_CAPTURE_AUDIO = NETWORK_RELAY_CAPTURE_AUDIO,
     STREAM_EVENT_CAPTURE_COMMIT = NETWORK_RELAY_CAPTURE_COMMIT,
     STREAM_EVENT_CAPTURE_CANCEL = NETWORK_RELAY_CAPTURE_CANCEL,
+    STREAM_EVENT_RESPONSE_CANCEL,
     STREAM_EVENT_REMOTE_PLAYED,
     STREAM_EVENT_LOCAL_FALLBACK,
 } stream_event_t;
@@ -153,7 +154,9 @@ struct network_relay {
     atomic_uint active_output_token;
     atomic_uint completed_output_token;
     atomic_uint output_input_samples;
+    atomic_uint next_output_sequence;
     atomic_bool output_turn_active;
+    atomic_bool generated_output_mode;
     uint32_t epoch_counter;
     uint32_t stream_turn_epoch;
     uint32_t stream_turn_token;
@@ -253,6 +256,8 @@ static void reset_stream_state(network_relay_t *relay)
     atomic_store(&relay->active_output_token, 0);
     atomic_store(&relay->completed_output_token, 0);
     atomic_store(&relay->output_input_samples, 0);
+    atomic_store(&relay->next_output_sequence, 0);
+    atomic_store(&relay->generated_output_mode, false);
     pcm_batcher_abort(&relay->pcm_batcher);
     xQueueReset(relay->stream_queue);
     xSemaphoreGive(relay->stream_mutex);
@@ -410,6 +415,16 @@ static void handle_control_payload(network_relay_t *relay,
             xEventGroupSetBits(relay->events, SOCKET_RESTART_BIT);
             return;
         }
+        const bool mode_openai = strstr(
+            relay->control_rx, "\"mode\":\"openai\"") != NULL;
+        const bool mode_echo = strstr(
+            relay->control_rx, "\"mode\":\"echo\"") != NULL;
+        if (!mode_openai && !mode_echo) {
+            increment_counter(relay, &relay->snapshot.protocol_errors);
+            xEventGroupSetBits(relay->events, SOCKET_RESTART_BIT);
+            return;
+        }
+        atomic_store(&relay->generated_output_mode, mode_openai);
         xEventGroupSetBits(relay->events, SOCKET_READY_BIT);
         set_state(relay, NETWORK_RELAY_READY);
         ESP_LOGI(TAG, "Relay protocol epoch=%u ready", epoch);
@@ -494,20 +509,31 @@ static void handle_audio_payload(network_relay_t *relay, uint32_t epoch,
         return;
     }
 
-    const uint32_t received_hash = audio_hash(
-        &bytes[AUDIO_HEADER_BYTES], pcm_bytes);
     bool matches = false;
-    portENTER_CRITICAL(&relay->stream_lock);
-    expected_echo_t *expected =
-        &relay->expected_echoes[sequence % EXPECTED_ECHO_SLOTS];
-    if (expected->valid && expected->sequence == sequence
-            && expected->epoch == epoch
-            && expected->sample_count == sample_count
-            && expected->hash == received_hash) {
-        matches = true;
+    if (atomic_load(&relay->generated_output_mode)) {
+        const uint32_t expected_sequence = atomic_load(
+            &relay->next_output_sequence);
+        if (atomic_load(&relay->output_turn_active)
+                && sequence == expected_sequence) {
+            atomic_store(&relay->next_output_sequence,
+                         expected_sequence + 1);
+            matches = true;
+        }
+    } else {
+        const uint32_t received_hash = audio_hash(
+            &bytes[AUDIO_HEADER_BYTES], pcm_bytes);
+        portENTER_CRITICAL(&relay->stream_lock);
+        expected_echo_t *expected =
+            &relay->expected_echoes[sequence % EXPECTED_ECHO_SLOTS];
+        if (expected->valid && expected->sequence == sequence
+                && expected->epoch == epoch
+                && expected->sample_count == sample_count
+                && expected->hash == received_hash) {
+            matches = true;
+        }
+        expected->valid = false;
+        portEXIT_CRITICAL(&relay->stream_lock);
     }
-    expected->valid = false;
-    portEXIT_CRITICAL(&relay->stream_lock);
 
     if (matches) {
         increment_counter(relay, &relay->snapshot.echo_frames_received);
@@ -903,6 +929,7 @@ static void service_stream_queue(network_relay_t *relay)
                        sizeof(relay->output_turn_id));
                 portEXIT_CRITICAL(&relay->stream_lock);
                 atomic_store(&relay->output_input_samples, 0);
+                atomic_store(&relay->next_output_sequence, 0);
                 atomic_store(&relay->active_output_token,
                              item.turn_token);
                 atomic_store(&relay->output_turn_active, true);
@@ -958,6 +985,18 @@ static void service_stream_queue(network_relay_t *relay)
                 if (!commit) {
                     relay->stream_turn_token = 0;
                 }
+            }
+            break;
+        case STREAM_EVENT_RESPONSE_CANCEL:
+            if (item.turn_token == relay->stream_turn_token
+                    && atomic_load(&relay->generated_output_mode)
+                    && atomic_load(&relay->output_turn_active)) {
+                char cancel[128];
+                snprintf(
+                    cancel, sizeof(cancel),
+                    "{\"v\":1,\"type\":\"response.cancel\","
+                    "\"turnId\":\"%s\"}", relay->active_turn_id);
+                send_control(relay, cancel);
             }
             break;
         case STREAM_EVENT_REMOTE_PLAYED:
@@ -1233,7 +1272,9 @@ esp_err_t network_relay_create(network_relay_t **out_relay)
     atomic_init(&relay->active_output_token, 0);
     atomic_init(&relay->completed_output_token, 0);
     atomic_init(&relay->output_input_samples, 0);
+    atomic_init(&relay->next_output_sequence, 0);
     atomic_init(&relay->output_turn_active, false);
+    atomic_init(&relay->generated_output_mode, false);
     relay->snapshot.state = NETWORK_RELAY_DISABLED;
     relay->snapshot.active_network = -1;
     relay->snapshot.rssi = -128;
@@ -1413,6 +1454,26 @@ esp_err_t network_relay_set_output_sink(network_relay_t *relay,
     relay->output_context = context;
     portEXIT_CRITICAL(&relay->stream_lock);
     return ESP_OK;
+}
+
+bool network_relay_cancel_response(network_relay_t *relay,
+                                   uint32_t turn_token)
+{
+    if (relay == NULL || relay->stream_queue == NULL || turn_token == 0
+            || (xEventGroupGetBits(relay->events) & SOCKET_READY_BIT) == 0
+            || xSemaphoreTake(relay->stream_mutex, 0) != pdTRUE) {
+        return false;
+    }
+    const uint32_t epoch = atomic_load(&relay->active_epoch);
+    const stream_item_t item = {
+        .event = STREAM_EVENT_RESPONSE_CANCEL,
+        .epoch = epoch,
+        .turn_token = turn_token,
+    };
+    const bool queued = epoch != 0
+        && xQueueSend(relay->stream_queue, &item, 0) == pdTRUE;
+    xSemaphoreGive(relay->stream_mutex);
+    return queued;
 }
 
 bool network_relay_report_playback(network_relay_t *relay,

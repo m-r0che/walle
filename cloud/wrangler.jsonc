@@ -5,7 +5,8 @@
   "compatibility_date": "2026-07-31",
   "compatibility_flags": ["nodejs_compat"],
   "vars": {
-    "INSTALLATION_ID": "home-prototype"
+    "INSTALLATION_ID": "home-prototype",
+    "AUDIO_PROVIDER": "openai"
   },
   "durable_objects": {
     "bindings": [

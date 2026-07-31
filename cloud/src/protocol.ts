@@ -32,6 +32,7 @@ export type DeviceControlMessage =
   | { v: 1; type: "turn.start"; turnId: string }
   | { v: 1; type: "turn.commit"; turnId: string }
   | { v: 1; type: "turn.cancel"; turnId: string }
+  | { v: 1; type: "response.cancel"; turnId: string }
   | {
       v: 1;
       type: "playback.report";
@@ -144,6 +145,7 @@ export function decodeControlMessage(text: string): DeviceControlMessage {
     case "turn.start":
     case "turn.commit":
     case "turn.cancel":
+    case "response.cancel":
       if (
         typeof message.turnId !== "string" ||
         message.turnId.length === 0 ||

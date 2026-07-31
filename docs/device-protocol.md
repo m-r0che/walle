@@ -16,7 +16,7 @@ Audio is 24 kHz, mono, little-endian PCM16. Each WebSocket binary message is one
 | 10 | 2 | Flags, unsigned little-endian; currently zero |
 | 12 | `samples × 2` | PCM16LE payload |
 
-Frames are limited to 960 samples (40 ms). Sequence numbers must be contiguous within a turn; the first frame may use any unsigned 32-bit sequence value. The initial echo provider returns each valid kind-1 frame as kind 2 without accumulating a turn.
+Frames are limited to 960 samples (40 ms). Input sequence numbers must be contiguous within a turn; the first input frame may use any unsigned 32-bit value. In `echo` mode, kind-2 frames must exactly match expected input sequence/count/hash records. In `openai` mode, generated kind-2 frames use their own contiguous sequence starting at zero; TLS-authenticated relay ownership plus turn/epoch/count bounds replace the echo-only hash equality.
 
 ## Control messages
 
@@ -29,16 +29,17 @@ Control messages are UTF-8 JSON text frames, limited to 4,096 encoded bytes. Eve
 {"v":1,"type":"turn.start","turnId":"device-generated-id"}
 {"v":1,"type":"turn.commit","turnId":"device-generated-id"}
 {"v":1,"type":"turn.cancel","turnId":"device-generated-id"}
+{"v":1,"type":"response.cancel","turnId":"device-generated-id"}
 {"v":1,"type":"playback.report","turnId":"device-generated-id","source":"local","samples":48000}
 {"v":1,"type":"ping","nonce":"bounded-value"}
 ```
 
-A successful `hello` is required before turns; binary input requires an active turn. Turn IDs and nonces are limited to 64 characters. `playback.report` is optional aggregate telemetry emitted after uninterrupted playback. It retains only the selected source and sample count; validated firmware reports `remote` only after complete response validation and reports `local` when a completed relay turn fails that gate.
+A successful `hello` is required before turns; binary input requires an active turn. `turn.cancel` aborts uncommitted input; `response.cancel` aborts generated output after input commit, such as when the device's bounded response deadline expires. Turn IDs and nonces are limited to 64 characters. `playback.report` is optional aggregate telemetry emitted after uninterrupted playback. It retains only the selected source and sample count; validated firmware reports `remote` only after complete response validation and reports `local` when a completed relay turn fails that gate.
 
 ### Relay → device
 
 ```json
-{"v":1,"type":"ready","mode":"echo","sampleRate":24000,"channels":1,"sampleFormat":"pcm16le","sessionEpoch":6}
+{"v":1,"type":"ready","mode":"openai","sampleRate":24000,"channels":1,"sampleFormat":"pcm16le","sessionEpoch":6}
 {"v":1,"type":"turn.started","turnId":"..."}
 {"v":1,"type":"turn.done","turnId":"...","frames":287,"inputSamples":73472,"outputSamples":48000}
 {"v":1,"type":"turn.cancelled","turnId":"..."}

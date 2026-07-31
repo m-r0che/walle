@@ -159,6 +159,17 @@ static void finish_stream_turn(offline_echo_t *echo,
     }
 }
 
+static void cancel_pending_remote(offline_echo_t *echo)
+{
+    if (echo->remote_attempted && echo->active_turn_token != 0
+            && remote_response_status(
+                &echo->remote_response, echo->active_turn_token)
+                == REMOTE_RESPONSE_RECEIVING) {
+        emit_stream_event(echo, OFFLINE_ECHO_STREAM_RESPONSE_CANCEL,
+                          NULL, 0);
+    }
+}
+
 static void process_remote_events(offline_echo_t *echo)
 {
     const remote_event_t *event;
@@ -396,6 +407,7 @@ static float frame_level(const int16_t *samples, size_t count)
 
 static void begin_recording(offline_echo_t *echo)
 {
+    cancel_pending_remote(echo);
     if (echo->active_turn_token != 0) {
         remote_response_cancel(&echo->remote_response,
                                echo->active_turn_token);
@@ -676,6 +688,9 @@ static void apply_command(offline_echo_t *echo, const command_t *command)
                     && snapshot.recording_committed) {
                 finish_stream_turn(echo, OFFLINE_ECHO_STREAM_CANCEL);
             }
+            if (snapshot.state == OFFLINE_ECHO_PREPARING) {
+                cancel_pending_remote(echo);
+            }
             esp_codec_dev_set_out_mute(echo->codec, true);
             set_playback_level(echo, 0.0f);
             remote_response_cancel(&echo->remote_response,
@@ -728,6 +743,7 @@ static void audio_task(void *argument)
             }
             if (decision == REMOTE_RESPONSE_USE_LOCAL) {
                 if (expiring) {
+                    cancel_pending_remote(echo);
                     portENTER_CRITICAL(&echo->snapshot_lock);
                     echo->snapshot.remote_timeouts++;
                     portEXIT_CRITICAL(&echo->snapshot_lock);

@@ -264,6 +264,9 @@ static bool handle_committed_audio_stream(
     case OFFLINE_ECHO_STREAM_LOCAL_FALLBACK:
         return network_relay_report_playback(
             context->network, turn_token, false, sample_count);
+    case OFFLINE_ECHO_STREAM_RESPONSE_CANCEL:
+        return network_relay_cancel_response(
+            context->network, turn_token);
     default:
         return false;
     }
