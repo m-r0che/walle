@@ -536,7 +536,9 @@ static bool refill_playback_ring(offline_echo_t *echo, int16_t *scratch,
 static void play_recording(offline_echo_t *echo, bool use_remote)
 {
     const uint32_t turn_token = echo->active_turn_token;
-    const size_t expected_samples = echo->recorded_samples;
+    const size_t expected_samples = use_remote
+        ? remote_response_sample_count(&echo->remote_response, turn_token)
+        : echo->recorded_samples;
     const bool remote_attempted = echo->remote_attempted;
     if (is_muted(echo) || expected_samples == 0 || turn_token == 0) {
         reset_audio_rings(echo);

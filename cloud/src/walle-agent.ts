@@ -32,6 +32,8 @@ export type RelayDebugStatus = {
   lastPlayback: PlaybackMetrics | null;
   lastGeneration: GenerationMetrics | null;
   pendingResponse: boolean;
+  providerError: string | null;
+  protocolError: string | null;
 };
 
 export type GenerationMetrics = {
@@ -75,7 +77,15 @@ type PendingResponse = {
   nextSequence: number;
   startedAt: number;
   firstAudioAt: number | null;
+  outputFrames: Uint8Array[];
+  outputHead: number;
+  pumpActive: boolean;
+  upstreamOutputSamples: number | null;
+  generationCompletedAt: number | null;
 };
+
+// Match the validated 960-sample / 24 kHz device ingress cadence.
+const OUTPUT_FRAME_PACE_MS = 40;
 
 type DeviceConnectionState = {
   ready: boolean;
@@ -100,6 +110,8 @@ export class WalleAgent extends Agent<WalleEnv> {
   private realtimeConnectionId: string | null = null;
   private pendingResponse: PendingResponse | null = null;
   private provider: AudioProvider = "echo";
+  private providerError: string | null = null;
+  private protocolError: string | null = null;
 
   static options = {
     sendIdentityOnConnect: false,
@@ -236,6 +248,8 @@ export class WalleAgent extends Agent<WalleEnv> {
       lastPlayback: this.getLastPlaybackMetrics(),
       lastGeneration: this.getLastGenerationMetrics(),
       pendingResponse: this.pendingResponse !== null,
+      providerError: this.providerError,
+      protocolError: this.protocolError,
     };
   }
 
@@ -336,6 +350,9 @@ export class WalleAgent extends Agent<WalleEnv> {
         connectionId: connection.id,
         error: error instanceof Error ? error.message : String(error),
       }));
+      this.protocolError = error instanceof Error
+        ? error.message.slice(0, 240)
+        : "unknown protocol error";
       connection.close(4002, "Protocol error");
     }
   }
@@ -452,6 +469,11 @@ export class WalleAgent extends Agent<WalleEnv> {
             nextSequence: 0,
             startedAt: Date.now(),
             firstAudioAt: null,
+            outputFrames: [],
+            outputHead: 0,
+            pumpActive: false,
+            upstreamOutputSamples: null,
+            generationCompletedAt: null,
           };
           try {
             if (this.realtime === null) {
@@ -633,6 +655,7 @@ export class WalleAgent extends Agent<WalleEnv> {
     this.closeRealtime("provider refresh");
     if (this.env.AUDIO_PROVIDER !== "openai") {
       this.provider = "echo";
+      this.providerError = null;
       return this.provider;
     }
     const apiKey = this.env.OPENAI_API_KEY;
@@ -642,6 +665,7 @@ export class WalleAgent extends Agent<WalleEnv> {
         installation: this.name,
       }));
       this.provider = "echo";
+      this.providerError = "OPENAI_API_KEY is unavailable";
       return this.provider;
     }
     this.realtimeConnectionId = connectionId;
@@ -664,6 +688,7 @@ export class WalleAgent extends Agent<WalleEnv> {
       this.realtime = realtime;
       this.realtimeConnectionId = connectionId;
       this.provider = "openai";
+      this.providerError = null;
       console.log(JSON.stringify({
         event: "openai.session_ready",
         installation: this.name,
@@ -674,11 +699,14 @@ export class WalleAgent extends Agent<WalleEnv> {
         this.realtimeConnectionId = null;
       }
       this.provider = "echo";
+      this.providerError = error instanceof Error
+        ? error.message
+        : String(error);
       console.error(JSON.stringify({
         event: "openai.session_unavailable",
         installation: this.name,
         connectionId,
-        error: error instanceof Error ? error.message : String(error),
+        error: this.providerError,
       }));
     }
     return this.provider;
@@ -697,6 +725,30 @@ export class WalleAgent extends Agent<WalleEnv> {
     }
     pending.outputSamples += pcm.byteLength / 2;
     if (pending.firstAudioAt === null) pending.firstAudioAt = Date.now();
+    pending.outputFrames.push(pcm);
+    if (!pending.pumpActive) {
+      pending.pumpActive = true;
+      setTimeout(
+        () => this.pumpRealtimeOutput(connectionId, turnId), 0);
+    }
+  }
+
+  private pumpRealtimeOutput(
+    connectionId: string,
+    turnId: string,
+  ): void {
+    const pending = this.pendingResponse;
+    if (pending === null || pending.connectionId !== connectionId
+        || pending.turnId !== turnId) return;
+    const pcm = pending.outputFrames[pending.outputHead];
+    if (pcm === undefined) {
+      pending.pumpActive = false;
+      if (pending.upstreamOutputSamples !== null) {
+        this.completeRealtimeTurn(connectionId, turnId);
+      }
+      return;
+    }
+    pending.outputHead++;
     const sequence = pending.nextSequence++;
     if (this.dropNextOutputFrame) {
       this.dropNextOutputFrame = false;
@@ -707,20 +759,24 @@ export class WalleAgent extends Agent<WalleEnv> {
         turnId,
         sequence,
       }));
-      return;
+    } else {
+      const connection = this.getConnection(connectionId);
+      if (connection === undefined) {
+        this.failRealtimeTurn(connectionId, turnId, "device_disconnected");
+        return;
+      }
+      connection.send(encodeAudioFrame({
+        kind: AudioFrameKind.OutputPcm16,
+        sequence,
+        flags: 0,
+        sampleCount: pcm.byteLength / 2,
+        pcm,
+      }));
     }
-    const connection = this.getConnection(connectionId);
-    if (connection === undefined) {
-      this.failRealtimeTurn(connectionId, turnId, "device_disconnected");
-      return;
-    }
-    connection.send(encodeAudioFrame({
-      kind: AudioFrameKind.OutputPcm16,
-      sequence,
-      flags: 0,
-      sampleCount: pcm.byteLength / 2,
-      pcm,
-    }));
+    setTimeout(
+      () => this.pumpRealtimeOutput(connectionId, turnId),
+      OUTPUT_FRAME_PACE_MS,
+    );
   }
 
   private finishRealtimeTurn(
@@ -735,12 +791,33 @@ export class WalleAgent extends Agent<WalleEnv> {
       this.failRealtimeTurn(connectionId, turnId, "output_count_mismatch");
       return;
     }
+    pending.upstreamOutputSamples = outputSamples;
+    pending.generationCompletedAt = Date.now();
+    if (!pending.pumpActive
+        && pending.outputHead === pending.outputFrames.length) {
+      this.completeRealtimeTurn(connectionId, turnId);
+    }
+  }
+
+  private completeRealtimeTurn(
+    connectionId: string,
+    turnId: string,
+  ): void {
+    const pending = this.pendingResponse;
+    if (pending === null || pending.connectionId !== connectionId
+        || pending.turnId !== turnId
+        || pending.upstreamOutputSamples === null
+        || pending.outputHead !== pending.outputFrames.length) {
+      this.failRealtimeTurn(connectionId, turnId, "output_delivery_mismatch");
+      return;
+    }
     const connection = this.getConnection(connectionId);
     if (connection === undefined) {
       this.pendingResponse = null;
       return;
     }
-    const completedAt = Date.now();
+    const outputSamples = pending.upstreamOutputSamples;
+    const completedAt = pending.generationCompletedAt ?? Date.now();
     const firstAudioMs = (pending.firstAudioAt ?? completedAt)
       - pending.startedAt;
     const totalMs = completedAt - pending.startedAt;
@@ -819,6 +896,7 @@ export class WalleAgent extends Agent<WalleEnv> {
     this.realtimeConnectionId = null;
     this.pendingResponse = null;
     this.provider = "echo";
+    this.providerError = reason;
     const connection = this.getConnection(connectionId);
     connection?.close(1012, "OpenAI session refresh");
     console.warn(JSON.stringify({

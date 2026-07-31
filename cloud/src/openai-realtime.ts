@@ -1,6 +1,7 @@
 export const OPENAI_REALTIME_MODEL = "gpt-realtime-2.1";
 export const OPENAI_REALTIME_VOICE = "marin";
 export const MAX_OUTPUT_SAMPLES = 144_000;
+const SAMPLE_RATE = 24_000;
 const MAX_OUTPUT_BYTES = MAX_OUTPUT_SAMPLES * 2;
 const MAX_SERVER_EVENT_CHARS = 512_000;
 const DEVICE_FRAME_BYTES = 960 * 2;
@@ -160,11 +161,11 @@ export class OpenAIRealtimeSession {
         ].join(" "),
         audio: {
           input: {
-            format: { type: "audio/pcm", rate: 24_000 },
+            format: { type: "audio/pcm", rate: SAMPLE_RATE },
             turn_detection: null,
           },
           output: {
-            format: { type: "audio/pcm" },
+            format: { type: "audio/pcm", rate: SAMPLE_RATE },
             voice: OPENAI_REALTIME_VOICE,
           },
         },
@@ -290,10 +291,20 @@ export class OpenAIRealtimeSession {
       case "response.done":
         this.handleResponseDone(event);
         return;
-      case "error":
-        this.rejectReady(new Error("OpenAI session configuration failed"));
-        this.failActive("openai_error");
+      case "error": {
+        const upstream = record(event.error);
+        const code = typeof upstream?.code === "string"
+          ? upstream.code.slice(0, 80)
+          : "unknown";
+        const message = typeof upstream?.message === "string"
+          ? upstream.message.slice(0, 240)
+          : "no upstream detail";
+        this.rejectReady(new Error(
+          `OpenAI session configuration failed (${code}): ${message}`,
+        ));
+        this.failActive(`openai_error:${code}`);
         return;
+      }
       default:
         return;
     }

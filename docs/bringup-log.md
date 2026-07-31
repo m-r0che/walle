@@ -473,3 +473,11 @@ Physical and authenticated echo validation passed:
 - final fresh-boot 47,104-sample exact remote playback over 50 frames.
 
 The face and audio remained normal. The promoted firmware source commit is `a9b37f8`; exact app SHA-256 is `6310d81102ef42c3b272dc1a83564292a6c225bfc736a3b7c906550c7dfab9c8`. Fault validation used deployed Worker version `e128a3b2-e7de-4cab-a409-6184bf5a0558`. The owner-only recovery set is `~/Library/Application Support/Walle/recovery/walle-remote-echo-coldboot-visible-6310d81102ef42c3/`.
+
+### OpenAI Realtime candidate bring-up
+
+The first `gpt-realtime-2.1` deployment failed closed to negotiated echo because the GA PCM session schema requires an explicit 24,000 Hz rate on both input and output formats. Bounded provider diagnostics exposed the exact missing output field without exposing the API key; adding it established the outbound session successfully.
+
+The first speech turn generated 57,600 samples from 32,768 captured samples in 1,074 ms, but the device correctly used local fallback. Diagnosis showed that a single upstream audio delta had been synchronously expanded into roughly 60 device frames, exceeding the intentionally small 33-event device queue. The Agent now queues at most the already-bounded six seconds of output and pumps one 960-sample frame every 40 ms—the physically validated network cadence—without blocking the OpenAI callback. A following physical turn produced audible synthesized speech with the face continuously visible.
+
+Further turns exposed a telemetry-only duration assumption: successful generated playback compared played output samples against captured input samples, preventing `playback.report` even though complete generated audio reached the codec. Playback completion now uses the independently validated remote output count. This candidate still requires a fresh firmware flash, repeated turns, fault fallback, reconnect, long visible soak, and cold boot before promotion.

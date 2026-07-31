@@ -98,6 +98,10 @@ describe("OpenAI Realtime session", () => {
     expect(session.output_modalities).toEqual(["audio"]);
     expect(audio.input.turn_detection).toBeNull();
     expect(audio.input.format).toEqual({ type: "audio/pcm", rate: 24_000 });
+    expect(audio.output.format).toEqual({
+      type: "audio/pcm",
+      rate: 24_000,
+    });
     expect(audio.output.voice).toBe("marin");
   });
 
