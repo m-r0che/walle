@@ -1,0 +1,679 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Walle Face Lab — Thick Line Study</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #061115;
+      --panel: #0a1a20;
+      --panel-2: #0d242b;
+      --cyan: #9bffff;
+      --cyan-mid: #42dce9;
+      --cyan-deep: #087182;
+      --amber: #ffc55a;
+      --coral: #ff7868;
+      --paper: #d8d2c2;
+      --muted: #78949b;
+      --line-weight: 11;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      overflow-x: hidden;
+      background:
+        radial-gradient(circle at 15% 0%, #16333a 0, transparent 34rem),
+        radial-gradient(circle at 100% 100%, #2a2417 0, transparent 32rem),
+        #050a0c;
+      color: #d8edf0;
+      font-family: "Avenir Next Condensed", "DIN Condensed", sans-serif;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: .07;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.5'/%3E%3C/svg%3E");
+      mix-blend-mode: screen;
+    }
+
+    .shell {
+      width: min(1420px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 34px 0 48px;
+    }
+
+    header {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: end;
+      gap: 24px;
+      margin-bottom: 28px;
+      border-bottom: 1px solid #24444b;
+      padding-bottom: 18px;
+    }
+
+    .eyebrow {
+      color: var(--amber);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .22em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 4px 0 0;
+      font-family: "Copperplate", "Rockwell", serif;
+      font-size: clamp(32px, 5vw, 62px);
+      font-weight: 700;
+      letter-spacing: -.04em;
+      line-height: .95;
+    }
+
+    .revision {
+      color: var(--muted);
+      font: 700 11px/1.4 ui-monospace, monospace;
+      letter-spacing: .12em;
+      text-align: right;
+      text-transform: uppercase;
+    }
+
+    main {
+      display: grid;
+      grid-template-columns: minmax(430px, .9fr) minmax(560px, 1.35fr);
+      gap: 34px;
+      align-items: start;
+    }
+
+    .stage-panel,
+    .library-panel {
+      background: linear-gradient(145deg, rgba(14, 38, 45, .9), rgba(6, 17, 21, .88));
+      border: 1px solid #26454d;
+      box-shadow: 0 28px 80px rgba(0, 0, 0, .38);
+    }
+
+    .stage-panel { padding: 26px; }
+
+    .panel-kicker {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      color: #88a4aa;
+      font: 700 11px/1 ui-monospace, monospace;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+      margin-bottom: 18px;
+    }
+
+    .live-dot {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: #8cf2b1;
+    }
+
+    .live-dot::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+      box-shadow: 0 0 13px currentColor;
+    }
+
+    .device {
+      position: relative;
+      width: min(100%, 368px);
+      aspect-ratio: 368 / 448;
+      margin: 0 auto;
+      border-radius: 46px;
+      padding: 7px;
+      background: linear-gradient(145deg, #52656a, #10191b 30%, #030607 72%, #38474a);
+      box-shadow:
+        0 38px 65px rgba(0, 0, 0, .55),
+        inset 0 1px 1px rgba(255, 255, 255, .35);
+    }
+
+    .device::after {
+      content: "";
+      position: absolute;
+      inset: 16px;
+      border-radius: 34px;
+      pointer-events: none;
+      background: linear-gradient(115deg, rgba(255,255,255,.08), transparent 23%, transparent 77%, rgba(255,255,255,.035));
+    }
+
+    #face-svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+      overflow: hidden;
+      border-radius: 39px;
+      background: #000;
+    }
+
+    .scanline {
+      opacity: .055;
+      mix-blend-mode: screen;
+    }
+
+    .face-glow {
+      fill: none;
+      stroke: var(--cyan-deep);
+      stroke-width: calc(var(--line-weight) * 2.25);
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      opacity: .43;
+      filter: url(#blurGlow);
+    }
+
+    .face-core {
+      fill: none;
+      stroke: var(--cyan);
+      stroke-width: var(--line-weight);
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      filter: url(#tightGlow);
+    }
+
+    .brow-core {
+      fill: none;
+      stroke: var(--amber);
+      stroke-width: calc(var(--line-weight) * .62);
+      stroke-linecap: round;
+      filter: url(#amberGlow);
+    }
+
+    .iris { fill: #26c9da; filter: url(#tightGlow); }
+    .pupil { fill: #001114; }
+    .catch { fill: #fff; filter: url(#tightGlow); }
+
+    .face-part {
+      transition: opacity 180ms ease, transform 240ms cubic-bezier(.2,.8,.2,1);
+      transform-box: fill-box;
+      transform-origin: center;
+    }
+
+    .hud-control {
+      fill: #06171c;
+      fill-opacity: .82;
+      stroke: #3ac7d4;
+      stroke-width: 1.5;
+    }
+
+    .hud-copy {
+      fill: #69dce6;
+      font: 700 14px ui-monospace, monospace;
+      letter-spacing: .08em;
+      text-anchor: middle;
+    }
+
+    .readout {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-top: 22px;
+      padding-top: 18px;
+      border-top: 1px solid #213c43;
+    }
+
+    .expression-name {
+      margin: 0;
+      color: #f1fbfc;
+      font-family: "Copperplate", serif;
+      font-size: 24px;
+      letter-spacing: .03em;
+    }
+
+    .expression-note {
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 4px;
+    }
+
+    .weight-control {
+      display: grid;
+      grid-template-columns: auto 110px auto;
+      align-items: center;
+      gap: 9px;
+      color: #8ca6ac;
+      font: 700 10px ui-monospace, monospace;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    input[type="range"] { accent-color: var(--amber); width: 110px; }
+
+    .library-panel { padding: 24px; }
+
+    .library-heading {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 18px;
+    }
+
+    .library-heading h2 {
+      margin: 0;
+      font-family: "Copperplate", serif;
+      font-size: 21px;
+      letter-spacing: .04em;
+    }
+
+    .library-heading span {
+      color: var(--muted);
+      font: 700 10px ui-monospace, monospace;
+      letter-spacing: .13em;
+      text-transform: uppercase;
+    }
+
+    .expression-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 11px;
+    }
+
+    .expression-card {
+      position: relative;
+      min-height: 158px;
+      padding: 12px;
+      overflow: hidden;
+      color: #dceff1;
+      background: #071419;
+      border: 1px solid #1c3940;
+      cursor: pointer;
+      text-align: left;
+      transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+    }
+
+    .expression-card:hover {
+      transform: translateY(-3px);
+      border-color: #4dbcc7;
+      background: #0b2026;
+    }
+
+    .expression-card.active {
+      border-color: var(--amber);
+      box-shadow: inset 0 0 0 1px rgba(255,197,90,.35), 0 0 24px rgba(255,197,90,.09);
+    }
+
+    .expression-card svg {
+      display: block;
+      width: 100%;
+      height: 108px;
+      background: radial-gradient(circle at 50% 50%, #09262e, #020708 75%);
+    }
+
+    .card-index {
+      position: absolute;
+      top: 17px;
+      right: 17px;
+      color: #46656c;
+      font: 700 9px ui-monospace, monospace;
+    }
+
+    .card-title {
+      display: block;
+      margin-top: 9px;
+      font: 800 12px/1 ui-monospace, monospace;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    .notes {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1px;
+      margin-top: 20px;
+      background: #244148;
+      border: 1px solid #244148;
+    }
+
+    .note {
+      min-height: 94px;
+      padding: 15px;
+      background: #071419;
+    }
+
+    .note strong {
+      display: block;
+      margin-bottom: 7px;
+      color: var(--amber);
+      font: 800 10px ui-monospace, monospace;
+      letter-spacing: .13em;
+      text-transform: uppercase;
+    }
+
+    .note p { margin: 0; color: #8ca7ad; font-size: 12px; line-height: 1.45; }
+
+    @media (max-width: 1000px) {
+      main { grid-template-columns: 1fr; }
+      .stage-panel { position: static; }
+    }
+
+    @media (max-width: 660px) {
+      .shell { width: min(100% - 20px, 1420px); padding-top: 18px; }
+      header { grid-template-columns: 1fr; }
+      .revision { text-align: left; }
+      .expression-grid { grid-template-columns: repeat(2, 1fr); }
+      .notes { grid-template-columns: 1fr; }
+      .readout { align-items: flex-start; flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <div>
+        <div class="eyebrow">Expression architecture / off-device study</div>
+        <h1>Thick-Line Face Lab</h1>
+      </div>
+      <div class="revision">WALLE / AMOLED 368×448<br>Study 01 — authored from sketch</div>
+    </header>
+
+    <main>
+      <section class="stage-panel">
+        <div class="panel-kicker">
+          <span>Live display preview</span>
+          <span class="live-dot">local</span>
+        </div>
+
+        <div class="device">
+          <svg id="face-svg" viewBox="0 0 368 448" role="img" aria-label="Animated robot face preview">
+            <defs>
+              <filter id="blurGlow" x="-60%" y="-60%" width="220%" height="220%">
+                <feGaussianBlur stdDeviation="5" />
+              </filter>
+              <filter id="tightGlow" x="-60%" y="-60%" width="220%" height="220%">
+                <feGaussianBlur stdDeviation="1.7" result="b" />
+                <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+              </filter>
+              <filter id="amberGlow" x="-60%" y="-60%" width="220%" height="220%">
+                <feGaussianBlur stdDeviation="2.2" result="b" />
+                <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+              </filter>
+              <pattern id="scan" width="4" height="4" patternUnits="userSpaceOnUse">
+                <rect width="4" height="1" fill="#a8ffff" />
+              </pattern>
+            </defs>
+            <rect width="368" height="448" fill="#000" />
+            <ellipse cx="184" cy="214" rx="160" ry="152" fill="#031116" opacity=".5" />
+
+            <g id="face-art">
+              <g id="brows" class="face-part"></g>
+              <g id="eye-glow" class="face-part"></g>
+              <g id="eyes" class="face-part"></g>
+              <g id="pupils" class="face-part"></g>
+              <g id="mouth-glow" class="face-part"></g>
+              <g id="mouth" class="face-part"></g>
+            </g>
+
+            <g opacity=".84">
+              <rect class="hud-control" x="54" y="376" width="72" height="52" rx="26" />
+              <text class="hud-copy" x="90" y="408">−</text>
+              <text class="hud-copy" x="184" y="405" font-size="12">VOL 60</text>
+              <rect class="hud-control" x="242" y="376" width="72" height="52" rx="26" />
+              <text class="hud-copy" x="278" y="408">+</text>
+            </g>
+            <rect class="scanline" width="368" height="448" fill="url(#scan)" />
+          </svg>
+        </div>
+
+        <div class="readout">
+          <div>
+            <h2 class="expression-name" id="expression-name">Open / attentive</h2>
+            <div class="expression-note" id="expression-note">Warm, available, ready to listen.</div>
+          </div>
+          <label class="weight-control">
+            <span>stroke</span>
+            <input id="weight" type="range" min="7" max="15" value="11" />
+            <output id="weight-value">11</output>
+          </label>
+        </div>
+      </section>
+
+      <section class="library-panel">
+        <div class="library-heading">
+          <h2>Expression deck</h2>
+          <span>select a state</span>
+        </div>
+        <div class="expression-grid" id="expression-grid"></div>
+
+        <div class="notes">
+          <div class="note">
+            <strong>Thicker silhouette</strong>
+            <p>Core strokes default to 11 px—roughly twice the visual authority of the current face—with restrained glow rather than fuzzy edges.</p>
+          </div>
+          <div class="note">
+            <strong>Readable at a glance</strong>
+            <p>Eye angle does the fast emotional work. Pupil placement adds nuance without extra eyebrows or making the robot look illustrated or human.</p>
+          </div>
+          <div class="note">
+            <strong>Animation-ready</strong>
+            <p>Open, blink, dozy and peek share compatible anchors, making truthful local transitions cheap enough for the ESP32 rasterizer.</p>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const expressions = {
+      open: {
+        title: "Open / attentive",
+        short: "Open",
+        note: "Warm, available, ready to listen.",
+        brows: ["M76 133 Q108 120 140 135", "M228 135 Q260 120 292 133"],
+        eyes: ["M67 190 A43 43 0 1 0 153 190 A43 43 0 1 0 67 190 Z", "M215 190 A43 43 0 1 0 301 190 A43 43 0 1 0 215 190 Z"],
+        pupils: [[110,190,12], [258,190,12]],
+        mouth: "M137 294 Q184 319 231 294"
+      },
+      blink: {
+        title: "Blink",
+        short: "Blink",
+        note: "A soft, full blink—not a mechanical shutter.",
+        brows: ["M76 143 Q108 130 140 142", "M228 142 Q260 130 292 143"],
+        eyes: ["M75 194 Q110 184 145 194", "M223 194 Q258 184 293 194"],
+        pupils: [],
+        mouth: "M145 298 Q184 311 223 298"
+      },
+      peek: {
+        title: "Blink + peek",
+        short: "Peek",
+        note: "Tiny pupils under the lids: conspiratorial and cute.",
+        brows: ["M77 145 Q108 128 139 139", "M229 139 Q260 128 291 145"],
+        eyes: ["M75 191 Q110 178 145 191", "M223 191 Q258 178 293 191"],
+        pupils: [[119,194,5], [267,194,5]],
+        mouth: "M151 300 Q184 304 217 300"
+      },
+      surprised: {
+        title: "What?!",
+        short: "What?!",
+        note: "Round eyes, low pupils, open little mouth.",
+        brows: ["M75 127 Q108 110 140 128", "M228 128 Q260 110 293 127"],
+        eyes: ["M64 190 A46 46 0 1 0 156 190 A46 46 0 1 0 64 190 Z", "M212 190 A46 46 0 1 0 304 190 A46 46 0 1 0 212 190 Z"],
+        pupils: [[110,210,9], [258,210,9]],
+        mouth: "M167 292 Q184 279 201 292 Q184 317 167 292 Z"
+      },
+      dozy: {
+        title: "Dozy",
+        short: "Dozy",
+        note: "Heavy lower lids with a small contented smile.",
+        brows: ["M77 154 Q108 142 139 153", "M229 153 Q260 142 291 154"],
+        eyes: ["M77 187 Q110 214 143 187", "M225 187 Q258 214 291 187"],
+        pupils: [[111,198,5], [257,198,5]],
+        mouth: "M145 294 Q184 322 223 294"
+      },
+      worried: {
+        title: "Worried",
+        short: "Worried",
+        note: "Inner eye corners lift; the mouth stays simple and honest.",
+        brows: ["M76 142 Q108 112 141 136", "M227 136 Q260 112 292 142"],
+        eyes: ["M78 198 Q110 167 142 187", "M226 187 Q258 167 290 198"],
+        pupils: [[120,196,7], [248,196,7]],
+        mouth: "M143 311 Q184 276 225 311"
+      },
+      happy: {
+        title: "Happy",
+        short: "Happy",
+        note: "Open joy without becoming a cartoon emoji.",
+        brows: ["M77 135 Q109 117 141 135", "M227 135 Q259 117 291 135"],
+        eyes: ["M77 203 Q110 164 143 203", "M225 203 Q258 164 291 203"],
+        pupils: [],
+        mouth: "M132 287 Q184 332 236 287"
+      },
+      interested: {
+        title: "Interested",
+        short: "Interested",
+        note: "One eye leads; asymmetry makes it feel alive.",
+        brows: ["M76 141 Q108 119 141 136", "M228 130 Q260 117 292 134"],
+        eyes: ["M67 190 A43 43 0 1 0 153 190 A43 43 0 1 0 67 190 Z", "M215 190 A43 43 0 1 0 301 190 A43 43 0 1 0 215 190 Z"],
+        pupils: [[122,184,10], [270,184,10]],
+        mouth: "M142 291 Q184 322 226 291"
+      },
+      devious: {
+        title: "Deviously pleased",
+        short: "Devious",
+        note: "A knowing inward tilt and restrained grin.",
+        brows: ["M76 132 L143 169", "M225 169 L292 132"],
+        eyes: ["M78 172 L142 205", "M226 205 L290 172"],
+        pupils: [[132,200,6], [236,200,6]],
+        mouth: "M137 287 Q184 330 231 287"
+      },
+      angry: {
+        title: "Angry",
+        short: "Angry",
+        note: "Readable but still toy-like, never threatening.",
+        brows: ["M76 141 L143 183", "M225 183 L292 141"],
+        eyes: ["M79 161 L140 204", "M228 204 L289 161"],
+        pupils: [[132,197,7], [236,197,7]],
+        mouth: "M137 314 Q184 272 231 314"
+      },
+      furious: {
+        title: "Very angry",
+        short: "Furious",
+        note: "Sharper lower eye hooks; reserved for real errors.",
+        brows: ["M73 136 L145 184", "M223 184 L295 136"],
+        eyes: ["M79 164 Q112 205 143 214", "M225 214 Q256 205 289 164"],
+        pupils: [[135,205,6], [233,205,6]],
+        mouth: "M131 318 Q184 265 237 318"
+      },
+      sad: {
+        title: "Sad / offline",
+        short: "Sad",
+        note: "Soft inward tilt and a shallow downturned mouth.",
+        brows: ["M78 136 Q111 113 143 145", "M225 145 Q257 113 290 136"],
+        eyes: ["M79 196 Q111 169 143 205", "M225 205 Q257 169 289 196"],
+        pupils: [[112,197,7], [256,197,7]],
+        mouth: "M141 315 Q184 280 227 315"
+      }
+    };
+
+    const NS = "http://www.w3.org/2000/svg";
+    let activeKey = "open";
+
+    function path(d, className) {
+      const node = document.createElementNS(NS, "path");
+      node.setAttribute("d", d);
+      node.setAttribute("class", className);
+      return node;
+    }
+
+    function circle(cx, cy, r, className) {
+      const node = document.createElementNS(NS, "circle");
+      node.setAttribute("cx", cx);
+      node.setAttribute("cy", cy);
+      node.setAttribute("r", r);
+      node.setAttribute("class", className);
+      return node;
+    }
+
+    function renderFace(target, state, miniature = false) {
+      const brows = target.querySelector('[data-part="brows"]') || document.getElementById("brows");
+      const glow = target.querySelector('[data-part="glow"]') || document.getElementById("eye-glow");
+      const eyes = target.querySelector('[data-part="eyes"]') || document.getElementById("eyes");
+      const pupils = target.querySelector('[data-part="pupils"]') || document.getElementById("pupils");
+      const mouthGlow = target.querySelector('[data-part="mouth-glow"]') || document.getElementById("mouth-glow");
+      const mouth = target.querySelector('[data-part="mouth"]') || document.getElementById("mouth");
+      [brows, glow, eyes, pupils, mouthGlow, mouth].forEach(node => node.replaceChildren());
+
+      // This direction deliberately omits eyebrows. Emotion comes from the
+      // eye silhouette, lid angle, pupil placement, and mouth curve.
+      state.eyes.forEach(d => {
+        if (!miniature) glow.appendChild(path(d, "face-glow"));
+        eyes.appendChild(path(d, miniature ? "mini-core" : "face-core"));
+      });
+      state.pupils.forEach(([x, y, r]) => {
+        pupils.appendChild(circle(x, y, r, miniature ? "mini-iris" : "iris"));
+        pupils.appendChild(circle(x, y, Math.max(2.5, r * .48), miniature ? "mini-pupil" : "pupil"));
+        if (!miniature && r > 6) pupils.appendChild(circle(x - r * .24, y - r * .27, Math.max(1.8, r * .18), "catch"));
+      });
+      if (!miniature) mouthGlow.appendChild(path(state.mouth, "face-glow"));
+      mouth.appendChild(path(state.mouth, miniature ? "mini-core" : "face-core"));
+    }
+
+    function selectExpression(key) {
+      activeKey = key;
+      const state = expressions[key];
+      renderFace(document.getElementById("face-svg"), state);
+      document.getElementById("expression-name").textContent = state.title;
+      document.getElementById("expression-note").textContent = state.note;
+      document.querySelectorAll(".expression-card").forEach(card => {
+        card.classList.toggle("active", card.dataset.key === key);
+      });
+    }
+
+    const grid = document.getElementById("expression-grid");
+    Object.entries(expressions).forEach(([key, state], index) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "expression-card";
+      button.dataset.key = key;
+      button.innerHTML = `
+        <span class="card-index">${String(index + 1).padStart(2, "0")}</span>
+        <svg viewBox="40 100 288 230" aria-hidden="true">
+          <style>
+            .mini-core{fill:none;stroke:#9bffff;stroke-width:10;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 0 4px #087182)}
+            .mini-brow{fill:none;stroke:#ffc55a;stroke-width:6;stroke-linecap:round}
+            .mini-iris{fill:#26c9da}.mini-pupil{fill:#001114}
+          </style>
+          <g data-part="brows"></g><g data-part="glow"></g><g data-part="eyes"></g><g data-part="pupils"></g><g data-part="mouth-glow"></g><g data-part="mouth"></g>
+        </svg>
+        <span class="card-title">${state.short}</span>`;
+      button.addEventListener("click", () => selectExpression(key));
+      grid.appendChild(button);
+      renderFace(button.querySelector("svg"), state, true);
+    });
+
+    const weight = document.getElementById("weight");
+    weight.addEventListener("input", () => {
+      document.documentElement.style.setProperty("--line-weight", weight.value);
+      document.getElementById("weight-value").textContent = weight.value;
+    });
+
+    selectExpression("open");
+
+    // A restrained autonomous blink demonstrates the intended local motion.
+    let blinkTimer;
+    function scheduleBlink() {
+      clearTimeout(blinkTimer);
+      blinkTimer = setTimeout(() => {
+        if (activeKey === "open") {
+          selectExpression("blink");
+          setTimeout(() => selectExpression("open"), 220);
+        }
+        scheduleBlink();
+      }, 3600 + Math.random() * 2200);
+    }
+    scheduleBlink();
+  </script>
+</body>
+</html>

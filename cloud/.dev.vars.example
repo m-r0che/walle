@@ -1,0 +1,2 @@
+# Copy to .dev.vars for local development. Never commit the real token.
+DEVICE_TOKEN=replace-with-at-least-16-random-characters

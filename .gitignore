@@ -1,0 +1,35 @@
+# macOS
+.DS_Store
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+credentials.h
+secrets/
+
+# ESP-IDF generated files
+build/
+sdkconfig
+sdkconfig.old
+managed_components/
+*.bin
+*.elf
+*.map
+
+# JavaScript/TypeScript
+node_modules/
+coverage/
+dist/
+.wrangler/
+
+# Editors
+.vscode/
+.idea/
+
+# Device backups must remain private and outside this repository
+backups/
+*.flash-backup

@@ -1,0 +1,28 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "walle-relay",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-31",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "INSTALLATION_ID": "home-prototype"
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "WalleAgent",
+        "class_name": "WalleAgent"
+      }
+    ]
+  },
+  "exports": {
+    "WalleAgent": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}
