@@ -40,6 +40,11 @@ export type RelayDebugStatus = {
     connectionId: string;
     receivedAt: number;
   }) | null;
+  lastGenerationFailure: {
+    turnId: string;
+    reason: string;
+    createdAt: number;
+  } | null;
 };
 
 export type GenerationMetrics = {
@@ -123,6 +128,11 @@ export class WalleAgent extends Agent<WalleEnv> {
     connectionId: string;
     receivedAt: number;
   }) | null = null;
+  private lastGenerationFailure: {
+    turnId: string;
+    reason: string;
+    createdAt: number;
+  } | null = null;
 
   static options = {
     sendIdentityOnConnect: false,
@@ -263,6 +273,7 @@ export class WalleAgent extends Agent<WalleEnv> {
       protocolError: this.protocolError,
       outputPaceMs: OUTPUT_FRAME_PACE_MS,
       latestTelemetry: this.latestTelemetry,
+      lastGenerationFailure: this.lastGenerationFailure,
     };
   }
 
@@ -429,8 +440,12 @@ export class WalleAgent extends Agent<WalleEnv> {
               throw new Error("OpenAI session is unavailable");
             }
             this.realtime.beginTurn(message.turnId);
-          } catch {
+          } catch (error) {
             turnProvider = "failed";
+            this.recordGenerationFailure(
+              message.turnId,
+              error instanceof Error ? error.message : "begin_turn_failed",
+            );
           }
         }
         this.turnStats.set(connection.id, {
@@ -502,8 +517,12 @@ export class WalleAgent extends Agent<WalleEnv> {
               frames: committed.frames,
               inputSamples: committed.samples,
             }));
-          } catch {
+          } catch (error) {
             this.pendingResponse = null;
+            this.recordGenerationFailure(
+              message.turnId,
+              error instanceof Error ? error.message : "commit_turn_failed",
+            );
             sendJson(connection, {
               v: 1,
               type: "turn.cancelled",
@@ -648,8 +667,12 @@ export class WalleAgent extends Agent<WalleEnv> {
           throw new Error("OpenAI session is unavailable");
         }
         this.realtime.appendPcm(state.activeTurnId, frame.pcm);
-      } catch {
+      } catch (error) {
         stats.provider = "failed";
+        this.recordGenerationFailure(
+          state.activeTurnId,
+          error instanceof Error ? error.message : "append_pcm_failed",
+        );
         this.realtime?.cancelTurn(state.activeTurnId);
       }
       return;
@@ -882,11 +905,23 @@ export class WalleAgent extends Agent<WalleEnv> {
     this.pendingResponse = null;
   }
 
+  private recordGenerationFailure(
+    turnId: string,
+    reason: string,
+  ): void {
+    this.lastGenerationFailure = {
+      turnId,
+      reason: reason.slice(0, 160),
+      createdAt: Date.now(),
+    };
+  }
+
   private failRealtimeTurn(
     connectionId: string,
     turnId: string,
     reason: string,
   ): void {
+    this.recordGenerationFailure(turnId, reason);
     const active = this.turnStats.get(connectionId);
     if (active?.turnId === turnId) active.provider = "failed";
     const pending = this.pendingResponse;
