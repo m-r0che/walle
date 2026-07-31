@@ -191,7 +191,7 @@ export function decodeControlMessage(text: string): DeviceControlMessage {
         typeof message.samples !== "number" ||
         !Number.isInteger(message.samples) ||
         message.samples <= 0 ||
-        message.samples > 720_000
+        message.samples > 7_200_000
       ) {
         throw new Error("playback report is invalid");
       }

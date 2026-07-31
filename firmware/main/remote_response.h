@@ -22,6 +22,9 @@ typedef struct {
     size_t capacity;
     size_t sample_count;
     size_t read_offset;
+    size_t write_offset;
+    size_t received_count;
+    size_t read_count;
     uint32_t turn_token;
     remote_response_status_t status;
     bool streaming_started;

@@ -37,6 +37,7 @@ export type RelayDebugStatus = {
   providerError: string | null;
   protocolError: string | null;
   outputPaceMs: number;
+  steadyOutputPaceMs: number;
   playbackMode: "buffered";
   latestTelemetry: (DeviceTelemetryReport & {
     connectionId: string;
@@ -97,9 +98,11 @@ type PendingResponse = {
   generationCompletedAt: number | null;
 };
 
-// Generated output is downlink-only; pace below burst rate while allowing the
-// audio task to drain its bounded event queue between callbacks.
-const OUTPUT_FRAME_PACE_MS = 20;
+// Fill the initial jitter buffer quickly, then match 960 samples / 24 kHz.
+const OUTPUT_STARTUP_PACE_MS = 20;
+const OUTPUT_STEADY_PACE_MS = 40;
+const OUTPUT_STARTUP_FRAMES = 25;
+const OUTPUT_QUEUE_COMPACT_FRAMES = 64;
 
 type DeviceConnectionState = {
   ready: boolean;
@@ -273,7 +276,8 @@ export class WalleAgent extends Agent<WalleEnv> {
       pendingResponse: this.pendingResponse !== null,
       providerError: this.providerError,
       protocolError: this.protocolError,
-      outputPaceMs: OUTPUT_FRAME_PACE_MS,
+      outputPaceMs: OUTPUT_STARTUP_PACE_MS,
+      steadyOutputPaceMs: OUTPUT_STEADY_PACE_MS,
       playbackMode: "buffered",
       latestTelemetry: this.latestTelemetry,
       lastGenerationFailure: this.lastGenerationFailure,
@@ -827,9 +831,17 @@ export class WalleAgent extends Agent<WalleEnv> {
         pcm,
       }));
     }
+    if (pending.outputHead >= OUTPUT_QUEUE_COMPACT_FRAMES
+        && pending.outputHead * 2 >= pending.outputFrames.length) {
+      pending.outputFrames.splice(0, pending.outputHead);
+      pending.outputHead = 0;
+    }
+    const paceMs = pending.nextSequence < OUTPUT_STARTUP_FRAMES
+      ? OUTPUT_STARTUP_PACE_MS
+      : OUTPUT_STEADY_PACE_MS;
     setTimeout(
       () => this.pumpRealtimeOutput(connectionId, turnId),
-      OUTPUT_FRAME_PACE_MS,
+      paceMs,
     );
   }
 

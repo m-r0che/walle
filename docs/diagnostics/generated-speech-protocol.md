@@ -11,7 +11,7 @@ Generated speech does not have the same duration as user input. The protocol the
 1. Relay-reported input samples must equal authoritative local capture.
 2. Total received output samples must equal relay-reported output.
 
-Input and output may differ. Each is independently bounded to 30 seconds by device and cloud resource policy. Echo mode retains the stricter input sequence/count/hash equality.
+Input is bounded to 30 seconds. Generated output uses a five-minute provider abuse guard, while the device retains only a rolling 30-second PCM window; reply duration is no longer tied to retained device storage. Echo mode retains the stricter input sequence/count/hash equality.
 
 ```json
 {
@@ -37,7 +37,7 @@ The audio task starts remote playback after 500 ms of contiguous PCM is buffered
 
 Final `turn.done` accounting remains mandatory and successful uninterrupted playback is reported only after all declared output is consumed. Touch interruption cancels pending generation, clears buffered audio, and starts the replacement capture.
 
-The device retains a 10-second initial response deadline. Valid in-order progress advances a five-second stall deadline, bounded by a 45-second absolute wait. PCM and credentials are never persisted.
+The device retains a 10-second initial response deadline. Valid in-order progress advances a five-second stall deadline, bounded by a 330-second absolute wait that covers the provider guard at real-time steady delivery. PCM and credentials are never persisted.
 
 ## Resource changes
 
@@ -51,7 +51,7 @@ The candidate keeps all proven timing invariants:
 PSRAM-owned bounds are intentionally independent:
 
 - 30-second local capture;
-- 30-second generated response;
+- rolling 30-second generated-response window;
 - 640-entry uplink queue;
 - 1,024-entry downlink event queue;
 - 500 ms playback staging.
@@ -62,7 +62,7 @@ The deeper queues replace prototype scarcity rather than changing task ownership
 
 The Agent-owned adapter uses the official server-to-server `gpt-realtime-2.1` WebSocket protocol. It authenticates from a Worker secret, sends an installation-derived SHA-256 safety identifier, configures 24 kHz PCM with VAD disabled, clears input before push-to-talk turns, manually commits, and requests audio-only output using `marin`.
 
-Output deltas are identity-checked, decoded, bounded to 30 seconds, and split into 960-sample frames. The initial candidate retains 20 ms downlink pacing; buffered playback begins before `turn.done`, so full response duration no longer determines time-to-first-sound. After physical validation with deep queues, unpaced, 5 ms, 10 ms, and 20 ms delivery can be compared independently.
+Output deltas are identity-checked, decoded, guarded at five minutes, and split into 960-sample frames. The Agent uses 20 ms pacing for the first 25 frames to fill jitter quickly, then 40 ms pacing to match 24 kHz playback. Consumed queue entries are compacted outside the device audio path. Buffered playback begins before `turn.done`, so full response duration no longer determines time-to-first-sound.
 
 OpenAI error, close, identity mismatch, malformed Base64, odd PCM, output overflow, and incomplete status fail closed. Unexpected upstream loss forces a device reconnect so provider availability is explicitly renegotiated.
 
@@ -75,6 +75,7 @@ ASan/UBSan host tests cover:
 - starting only after a contiguous jitter threshold;
 - reading while output remains in progress;
 - appending after playback starts;
+- circular-buffer wrap and consumed-storage reclamation without bulk copies;
 - successful final count validation after partial readout;
 - late mismatch invalidation;
 - overflow, cancellation, stale tokens, timeout selection, and queue stress.

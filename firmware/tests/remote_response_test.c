@@ -202,6 +202,31 @@ static void test_buffered_streaming_reads_before_completion(void)
     assert(remote_response_cancel(&response, 50));
 }
 
+static void test_streaming_reclaims_consumed_storage(void)
+{
+    int16_t storage[8];
+    int16_t first[8];
+    int16_t second[6];
+    int16_t output[8];
+    remote_response_t response;
+    fill_sequence(first, ARRAY_SIZE(first), 0);
+    fill_sequence(second, ARRAY_SIZE(second), 8);
+    assert(remote_response_init(&response, storage, ARRAY_SIZE(storage)));
+    assert(remote_response_begin(&response, 52));
+    assert(remote_response_append(&response, 52, first, 8));
+    assert(remote_response_start_streaming(&response, 52, 4));
+    assert(remote_response_read(&response, 52, output, 6) == 6);
+    assert(remote_response_append(&response, 52, second, 6));
+    assert(remote_response_sample_count(&response, 52) == 14);
+    assert(remote_response_unread_samples(&response, 52) == 8);
+    assert(remote_response_complete(&response, 52, 14, 5, 5));
+    assert(remote_response_read(&response, 52, output, 8) == 8);
+    for (size_t index = 0; index < 8; index++) {
+        assert(output[index] == (int16_t)(index + 6));
+    }
+    assert(remote_response_stream_finished(&response, 52));
+}
+
 static void test_late_streaming_mismatch_invalidates(void)
 {
     int16_t storage[16];
@@ -247,6 +272,7 @@ int main(void)
     test_timeout_and_cancel_never_make_audio_readable();
     test_source_selection_is_bounded_and_complete_only();
     test_buffered_streaming_reads_before_completion();
+    test_streaming_reclaims_consumed_storage();
     test_late_streaming_mismatch_invalidates();
     test_invalid_configuration_and_new_turn_reset();
     puts("remote_response_test: PASS");

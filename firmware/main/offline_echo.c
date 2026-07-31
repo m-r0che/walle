@@ -33,7 +33,7 @@
 #define PREPARE_DELAY_MS 220
 #define REMOTE_RESPONSE_INITIAL_DEADLINE_MS 10000
 #define REMOTE_RESPONSE_STALL_DEADLINE_MS 5000
-#define REMOTE_RESPONSE_MAX_WAIT_MS 45000
+#define REMOTE_RESPONSE_MAX_WAIT_MS 330000
 #define REMOTE_EVENT_STORAGE_COUNT 1024
 #define DEFAULT_OUTPUT_VOLUME_PERCENT 20
 #define MIN_OUTPUT_VOLUME_PERCENT 10
@@ -86,6 +86,7 @@ struct offline_echo {
     int64_t prepare_until_us;
     int64_t remote_deadline_us;
     int64_t remote_absolute_deadline_us;
+    int64_t error_until_us;
 };
 
 static esp_codec_dev_sample_info_t sample_info(void)
@@ -447,6 +448,7 @@ static void begin_recording(offline_echo_t *echo)
     echo->remote_streaming_allowed = false;
     echo->remote_deadline_us = 0;
     echo->remote_absolute_deadline_us = 0;
+    echo->error_until_us = 0;
     reset_audio_rings(echo);
     set_recorded_samples(echo, 0);
     set_recording_committed(echo, false);
@@ -714,11 +716,13 @@ static void play_recording(offline_echo_t *echo, bool use_remote,
         set_recording_committed(echo, false);
         echo->active_turn_token = 0;
         echo->remote_attempted = false;
-        update_state(
-            echo,
-            (write_failed || stream_failed)
-                ? OFFLINE_ECHO_ERROR : OFFLINE_ECHO_IDLE,
-            (write_failed || stream_failed) ? ESP_FAIL : ESP_OK);
+        const bool failed = write_failed || stream_failed;
+        if (failed) {
+            echo->error_until_us = esp_timer_get_time() + 1500000LL;
+        }
+        update_state(echo,
+                     failed ? OFFLINE_ECHO_ERROR : OFFLINE_ECHO_IDLE,
+                     failed ? ESP_FAIL : ESP_OK);
     }
     ESP_LOGI(TAG,
              "Playback complete source=%s samples=%u failed=%d cancelled=%d interrupted=%d",
@@ -810,6 +814,13 @@ static void audio_task(void *argument)
         process_remote_events(echo);
         offline_echo_snapshot_t snapshot;
         offline_echo_get_snapshot(echo, &snapshot);
+        if (snapshot.state == OFFLINE_ECHO_ERROR
+                && echo->error_until_us > 0
+                && esp_timer_get_time() >= echo->error_until_us) {
+            echo->error_until_us = 0;
+            update_state(echo, OFFLINE_ECHO_IDLE, ESP_OK);
+            offline_echo_get_snapshot(echo, &snapshot);
+        }
         if (snapshot.state == OFFLINE_ECHO_PREPARING) {
             const int64_t now_us = esp_timer_get_time();
             const size_t stream_start_samples =

@@ -1,6 +1,6 @@
 export const OPENAI_REALTIME_MODEL = "gpt-realtime-2.1";
 export const OPENAI_REALTIME_VOICE = "marin";
-export const MAX_OUTPUT_SAMPLES = 24_000 * 30;
+export const MAX_OUTPUT_SAMPLES = 24_000 * 300;
 const SAMPLE_RATE = 24_000;
 const MAX_OUTPUT_BYTES = MAX_OUTPUT_SAMPLES * 2;
 const MAX_SERVER_EVENT_CHARS = 512_000;
