@@ -149,7 +149,7 @@ struct network_relay {
     SemaphoreHandle_t stream_mutex;
     StaticQueue_t stream_queue_control;
     uint8_t *stream_queue_storage;
-    bool capture_accepting;
+    atomic_bool capture_accepting;
     atomic_bool stream_turn_active;
     atomic_uint active_epoch;
     atomic_uint heartbeat_nonce;
@@ -844,14 +844,10 @@ static bool send_control(network_relay_t *relay, const char *message)
 
 static bool send_network_telemetry(network_relay_t *relay)
 {
-    bool capture_accepting;
-    UBaseType_t queue_depth;
-    if (xSemaphoreTake(relay->stream_mutex, pdMS_TO_TICKS(1)) != pdTRUE) {
-        return false;
-    }
-    capture_accepting = relay->capture_accepting;
-    queue_depth = uxQueueMessagesWaiting(relay->stream_queue);
-    xSemaphoreGive(relay->stream_mutex);
+    const bool capture_accepting = atomic_load(
+        &relay->capture_accepting);
+    const UBaseType_t queue_depth = uxQueueMessagesWaiting(
+        relay->stream_queue);
 
     network_relay_snapshot_t snapshot;
     network_relay_get_snapshot(relay, &snapshot);
@@ -1219,9 +1215,13 @@ static void service_websocket(network_relay_t *relay)
             }
 
             service_stream_queue(relay);
-            if (atomic_exchange(&relay->telemetry_dirty, false)
-                    || now >= next_telemetry_ms) {
-                if (send_network_telemetry(relay)) {
+            const bool telemetry_requested = atomic_exchange(
+                &relay->telemetry_dirty, false)
+                || now >= next_telemetry_ms;
+            if (telemetry_requested) {
+                if (atomic_load(&relay->stream_turn_active)) {
+                    atomic_store(&relay->telemetry_dirty, true);
+                } else if (send_network_telemetry(relay)) {
                     next_telemetry_ms = now + TELEMETRY_INTERVAL_MS;
                 } else {
                     atomic_store(&relay->telemetry_dirty, true);
@@ -1319,6 +1319,7 @@ esp_err_t network_relay_create(network_relay_t **out_relay)
     }
     relay->snapshot_lock = (portMUX_TYPE)portMUX_INITIALIZER_UNLOCKED;
     relay->stream_lock = (portMUX_TYPE)portMUX_INITIALIZER_UNLOCKED;
+    atomic_init(&relay->capture_accepting, false);
     atomic_init(&relay->stream_turn_active, false);
     atomic_init(&relay->active_epoch, 0);
     atomic_init(&relay->heartbeat_nonce, 0);
