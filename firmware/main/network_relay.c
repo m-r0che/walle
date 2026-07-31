@@ -48,7 +48,6 @@
 #define PROTOCOL_READY_DEADLINE_MS 15000
 #define HEARTBEAT_INTERVAL_MS 10000
 #define HEARTBEAT_TIMEOUT_MS 12000
-#define TELEMETRY_INTERVAL_MS 10000
 /* Refresh before the documented 60-minute OpenAI Realtime session limit. */
 #define SOCKET_MAX_LIFETIME_MS (55 * 60 * 1000)
 #define STABLE_CONNECTION_MS 30000
@@ -1127,7 +1126,6 @@ static void service_websocket(network_relay_t *relay)
         int64_t ready_ms = 0;
         int64_t next_ping_ms = 0;
         int64_t pong_deadline_ms = 0;
-        int64_t next_telemetry_ms = 0;
         bool hello_sent = false;
         bool awaiting_pong = false;
         socket_exit_reason_t reason = SOCKET_EXIT_TRANSPORT;
@@ -1180,7 +1178,6 @@ static void service_websocket(network_relay_t *relay)
             if (ready_ms == 0) {
                 ready_ms = now;
                 next_ping_ms = now;
-                next_telemetry_ms = now;
             }
 
             if ((bits & SOCKET_PONG_BIT) != 0) {
@@ -1216,14 +1213,11 @@ static void service_websocket(network_relay_t *relay)
 
             service_stream_queue(relay);
             const bool telemetry_requested = atomic_exchange(
-                &relay->telemetry_dirty, false)
-                || now >= next_telemetry_ms;
+                &relay->telemetry_dirty, false);
             if (telemetry_requested) {
                 if (atomic_load(&relay->stream_turn_active)) {
                     atomic_store(&relay->telemetry_dirty, true);
-                } else if (send_network_telemetry(relay)) {
-                    next_telemetry_ms = now + TELEMETRY_INTERVAL_MS;
-                } else {
+                } else if (!send_network_telemetry(relay)) {
                     atomic_store(&relay->telemetry_dirty, true);
                 }
             }
