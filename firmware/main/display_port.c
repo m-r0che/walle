@@ -22,9 +22,8 @@
 // internal RAM for the former 220-row buffer, so use two 110-row regions and
 // pace every submission to the known-visible ~28-transfer/second envelope.
 #define DISPLAY_DRAW_ROWS 110
-#define DISPLAY_H_RES BSP_LCD_V_RES
-#define DISPLAY_V_RES BSP_LCD_H_RES
-#define DISPLAY_V2_ROTATED_Y_GAP 16
+#define DISPLAY_LOGICAL_H_RES BSP_LCD_V_RES
+#define DISPLAY_LOGICAL_V_RES BSP_LCD_H_RES
 #define MIN_TRANSFER_INTERVAL_US 35000
 #define DISPLAY_BRIGHTNESS_PERCENT 45
 
@@ -35,6 +34,7 @@ typedef struct {
     esp_lcd_panel_handle_t panel;
     esp_lcd_panel_io_handle_t io;
     uint16_t *draw_buffer;
+    uint16_t *rotation_buffer;
     atomic_bool transfer_in_flight;
     atomic_uint submitted;
     atomic_uint completed;
@@ -103,12 +103,32 @@ static void flush_display(lv_display_t *display, const lv_area_t *area,
         ESP_LOGE(TAG, "LVGL reused display buffer before transfer completion");
     }
 
+    // LVGL renders into a PSRAM landscape buffer. Rotate this bounded dirty
+    // region into the completion-owned internal DMA buffer while leaving the
+    // CO5300 in its proven portrait address mode. Hardware MADCTL swapping
+    // accepts the command but does not make >368-column windows reliable on
+    // this panel.
+    lv_area_t rotated_area = *area;
+    lv_display_rotate_area(display, &rotated_area);
+    const lv_color_format_t color_format = lv_display_get_color_format(display);
+    const int32_t source_width = lv_area_get_width(area);
+    const int32_t source_height = lv_area_get_height(area);
+    const uint32_t source_stride = lv_draw_buf_width_to_stride(
+        source_width, color_format);
+    const uint32_t destination_stride = lv_draw_buf_width_to_stride(
+        lv_area_get_width(&rotated_area), color_format);
+    lv_draw_sw_rotate(color_map, port->rotation_buffer,
+                      source_width, source_height,
+                      source_stride, destination_stride,
+                      lv_display_get_rotation(display), color_format);
+    color_map = (uint8_t *)port->rotation_buffer;
+
     lv_draw_sw_rgb565_swap(color_map, pixel_count);
     port->last_submission_us = now_us;
     atomic_fetch_add_explicit(&port->submitted, 1, memory_order_relaxed);
     const esp_err_t error = esp_lcd_panel_draw_bitmap(
-        port->panel, area->x1, area->y1, area->x2 + 1, area->y2 + 1,
-        color_map);
+        port->panel, rotated_area.x1, rotated_area.y1,
+        rotated_area.x2 + 1, rotated_area.y2 + 1, color_map);
     if (error != ESP_OK) {
         atomic_fetch_add_explicit(&port->submit_errors, 1,
                                   memory_order_relaxed);
@@ -144,25 +164,15 @@ lv_display_t *display_port_start(void)
         return NULL;
     }
 
-    // Rotate in the CO5300 rather than allocating LVGL's additional software-
-    // rotation buffer. For the confirmed CST816S/CO5300 V2, the portrait
-    // controller's 16-pixel X gap becomes a Y gap in landscape.
-    error = esp_lcd_panel_swap_xy(s_port.panel, true);
-    if (error == ESP_OK) {
-        error = esp_lcd_panel_mirror(s_port.panel, false, true);
-    }
-    if (error != ESP_OK) {
-        ESP_LOGE(TAG, "Panel landscape rotation failed: %s",
-                 esp_err_to_name(error));
-        return NULL;
-    }
-
-    const size_t buffer_pixels = DISPLAY_H_RES * DISPLAY_DRAW_ROWS;
+    const size_t buffer_pixels = DISPLAY_LOGICAL_H_RES * DISPLAY_DRAW_ROWS;
     s_port.draw_buffer = heap_caps_aligned_alloc(
         64, buffer_pixels * sizeof(*s_port.draw_buffer),
+        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    s_port.rotation_buffer = heap_caps_aligned_alloc(
+        64, buffer_pixels * sizeof(*s_port.rotation_buffer),
         MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
-    if (s_port.draw_buffer == NULL) {
-        ESP_LOGE(TAG, "Display DMA-buffer allocation failed");
+    if (s_port.draw_buffer == NULL || s_port.rotation_buffer == NULL) {
+        ESP_LOGE(TAG, "Display rotation-buffer allocation failed");
         return NULL;
     }
 
@@ -170,7 +180,7 @@ lv_display_t *display_port_start(void)
         ESP_LOGE(TAG, "LVGL lock failed");
         return NULL;
     }
-    s_port.display = lv_display_create(DISPLAY_H_RES, DISPLAY_V_RES);
+    s_port.display = lv_display_create(BSP_LCD_H_RES, BSP_LCD_V_RES);
     if (s_port.display != NULL) {
         lv_display_set_color_format(s_port.display, LV_COLOR_FORMAT_RGB565);
         lv_display_set_buffers(s_port.display, s_port.draw_buffer, NULL,
@@ -178,6 +188,7 @@ lv_display_t *display_port_start(void)
                                LV_DISPLAY_RENDER_MODE_PARTIAL);
         lv_display_set_driver_data(s_port.display, &s_port);
         lv_display_set_flush_cb(s_port.display, flush_display);
+        lv_display_set_rotation(s_port.display, LV_DISPLAY_ROTATION_90);
         lv_display_add_event_cb(s_port.display, round_invalidated_area,
                                 LV_EVENT_INVALIDATE_AREA, NULL);
         lv_display_add_event_cb(s_port.display, wake_display_task,
@@ -208,13 +219,9 @@ lv_display_t *display_port_start(void)
                  esp_err_to_name(error));
         return NULL;
     }
-    error = esp_lcd_panel_set_gap(s_port.panel, 0,
-                                  DISPLAY_V2_ROTATED_Y_GAP);
+    error = esp_lcd_touch_set_mirror_x(touch, false);
     if (error == ESP_OK) {
-        error = esp_lcd_touch_set_mirror_x(touch, true);
-    }
-    if (error == ESP_OK) {
-        error = esp_lcd_touch_set_mirror_y(touch, false);
+        error = esp_lcd_touch_set_mirror_y(touch, true);
     }
     if (error == ESP_OK) {
         error = esp_lcd_touch_set_swap_xy(touch, true);
@@ -234,8 +241,9 @@ lv_display_t *display_port_start(void)
     }
 
     ESP_LOGI(TAG,
-             "QSPI display ready: %ux%u landscape, one %u-row internal DMA buffer, minimum interval=%uus",
-             (unsigned)DISPLAY_H_RES, (unsigned)DISPLAY_V_RES,
+             "QSPI display ready: %ux%u software-rotated landscape, one %u-row internal DMA buffer, minimum interval=%uus",
+             (unsigned)DISPLAY_LOGICAL_H_RES,
+             (unsigned)DISPLAY_LOGICAL_V_RES,
              (unsigned)DISPLAY_DRAW_ROWS,
              (unsigned)MIN_TRANSFER_INTERVAL_US);
     return s_port.display;
