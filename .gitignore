@@ -26,6 +26,10 @@ coverage/
 dist/
 .wrangler/
 
+# Python
+__pycache__/
+*.pyc
+
 # Editors
 .vscode/
 .idea/

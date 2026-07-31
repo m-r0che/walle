@@ -1,5 +1,7 @@
 #include "network_relay.h"
 
+#include "pcm_batcher.h"
+
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -56,10 +58,18 @@
 #define MANAGER_STACK_BYTES 5120
 #define WEBSOCKET_STACK_BYTES 6144
 #define AUDIO_HEADER_BYTES 12
-#define AUDIO_FRAME_SAMPLES 256
+#define CAPTURE_CHUNK_SAMPLES 256
+#define NETWORK_FRAME_SAMPLES 960
 #define STREAM_QUEUE_LENGTH 32
 #define STREAM_CONTROL_RESERVE 2
 #define EXPECTED_ECHO_SLOTS 64
+
+_Static_assert(CAPTURE_CHUNK_SAMPLES <= NETWORK_FRAME_SAMPLES,
+               "capture chunks must fit network frames");
+_Static_assert(AUDIO_HEADER_BYTES
+                       + NETWORK_FRAME_SAMPLES * sizeof(int16_t)
+                   <= SOCKET_BUFFER_BYTES,
+               "network audio frames must fit the WebSocket buffer");
 
 static const char *TAG = "network_relay";
 
@@ -90,7 +100,7 @@ typedef struct {
     network_relay_capture_event_t event;
     uint16_t sample_count;
     uint32_t epoch;
-    int16_t samples[AUDIO_FRAME_SAMPLES];
+    int16_t samples[CAPTURE_CHUNK_SAMPLES];
 } stream_item_t;
 
 typedef struct {
@@ -134,6 +144,8 @@ struct network_relay {
     uint32_t turn_counter;
     uint32_t next_input_sequence;
     expected_echo_t expected_echoes[EXPECTED_ECHO_SLOTS];
+    pcm_batcher_t pcm_batcher;
+    uint8_t *audio_tx_frame;
     char active_turn_id[64];
     char relay_uri[384];
     char authorization_header[640];
@@ -216,6 +228,7 @@ static void reset_stream_state(network_relay_t *relay)
     relay->capture_accepting = false;
     relay->stream_turn_active = false;
     relay->stream_turn_epoch = 0;
+    pcm_batcher_abort(&relay->pcm_batcher);
     xQueueReset(relay->stream_queue);
     xSemaphoreGive(relay->stream_mutex);
 
@@ -323,7 +336,7 @@ static void handle_audio_payload(network_relay_t *relay, uint32_t epoch,
     const uint32_t sequence = read_u32_le(&bytes[4]);
     const uint16_t sample_count = read_u16_le(&bytes[8]);
     const size_t pcm_bytes = (size_t)sample_count * sizeof(int16_t);
-    if (sample_count == 0 || sample_count > AUDIO_FRAME_SAMPLES
+    if (sample_count == 0 || sample_count > NETWORK_FRAME_SAMPLES
             || data->data_len != AUDIO_HEADER_BYTES + (int)pcm_bytes) {
         increment_counter(relay, &relay->snapshot.protocol_errors);
         return;
@@ -634,22 +647,27 @@ static bool send_control(network_relay_t *relay, const char *message)
     return sent;
 }
 
-static bool send_audio_frame(network_relay_t *relay,
-                             const stream_item_t *item)
+static bool send_audio_frame(void *context, const int16_t *samples,
+                             size_t sample_count)
 {
-    uint8_t frame[AUDIO_HEADER_BYTES
-                  + AUDIO_FRAME_SAMPLES * sizeof(int16_t)];
-    const size_t pcm_bytes =
-        (size_t)item->sample_count * sizeof(item->samples[0]);
+    network_relay_t *relay = context;
+    if (sample_count == 0 || sample_count > NETWORK_FRAME_SAMPLES
+            || samples != (const int16_t *)&relay->audio_tx_frame[
+                AUDIO_HEADER_BYTES]) {
+        increment_counter(relay, &relay->snapshot.protocol_errors);
+        return false;
+    }
+
+    uint8_t *frame = relay->audio_tx_frame;
+    const size_t pcm_bytes = sample_count * sizeof(*samples);
     const uint32_t sequence = relay->next_input_sequence++;
     frame[0] = 0x57;
     frame[1] = 0x41;
     frame[2] = 1;
     frame[3] = 1;
     write_u32_le(&frame[4], sequence);
-    write_u16_le(&frame[8], item->sample_count);
+    write_u16_le(&frame[8], (uint16_t)sample_count);
     write_u16_le(&frame[10], 0);
-    memcpy(&frame[AUDIO_HEADER_BYTES], item->samples, pcm_bytes);
 
     const uint32_t hash = audio_hash(&frame[AUDIO_HEADER_BYTES], pcm_bytes);
     portENTER_CRITICAL(&relay->stream_lock);
@@ -657,8 +675,8 @@ static bool send_audio_frame(network_relay_t *relay,
         &relay->expected_echoes[sequence % EXPECTED_ECHO_SLOTS];
     expected->sequence = sequence;
     expected->hash = hash;
-    expected->epoch = item->epoch;
-    expected->sample_count = item->sample_count;
+    expected->epoch = relay->stream_turn_epoch;
+    expected->sample_count = (uint16_t)sample_count;
     expected->valid = true;
     portEXIT_CRITICAL(&relay->stream_lock);
 
@@ -697,6 +715,7 @@ static void service_stream_queue(network_relay_t *relay)
         }
         switch (item.event) {
         case NETWORK_RELAY_CAPTURE_START: {
+            pcm_batcher_abort(&relay->pcm_batcher);
             relay->turn_counter++;
             snprintf(relay->active_turn_id, sizeof(relay->active_turn_id),
                      "%08lx-%08lx", (unsigned long)relay->boot_nonce,
@@ -715,7 +734,12 @@ static void service_stream_queue(network_relay_t *relay)
         case NETWORK_RELAY_CAPTURE_AUDIO:
             if (relay->stream_turn_active
                     && relay->stream_turn_epoch == epoch) {
-                send_audio_frame(relay, &item);
+                if (!pcm_batcher_write(
+                        &relay->pcm_batcher, item.samples,
+                        item.sample_count, send_audio_frame, relay)) {
+                    relay->stream_turn_active = false;
+                    relay->stream_turn_epoch = 0;
+                }
             } else {
                 increment_counter(relay,
                                   &relay->snapshot.audio_frames_dropped);
@@ -728,11 +752,18 @@ static void service_stream_queue(network_relay_t *relay)
                 char message[128];
                 const bool commit =
                     item.event == NETWORK_RELAY_CAPTURE_COMMIT;
+                bool audio_complete = true;
+                if (commit) {
+                    audio_complete = pcm_batcher_finish(
+                        &relay->pcm_batcher, send_audio_frame, relay);
+                } else {
+                    pcm_batcher_abort(&relay->pcm_batcher);
+                }
                 snprintf(
                     message, sizeof(message),
                     "{\"v\":1,\"type\":\"turn.%s\",\"turnId\":\"%s\"}",
                     commit ? "commit" : "cancel", relay->active_turn_id);
-                if (send_control(relay, message)) {
+                if (audio_complete && send_control(relay, message)) {
                     increment_counter(
                         relay,
                         commit ? &relay->snapshot.turns_committed
@@ -1001,8 +1032,18 @@ esp_err_t network_relay_create(network_relay_t **out_relay)
     relay->stream_queue_storage = heap_caps_malloc(
         STREAM_QUEUE_LENGTH * sizeof(stream_item_t),
         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    relay->audio_tx_frame = heap_caps_malloc(
+        AUDIO_HEADER_BYTES + NETWORK_FRAME_SAMPLES * sizeof(int16_t),
+        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    const bool batcher_ready = relay->audio_tx_frame != NULL
+        && pcm_batcher_init(
+            &relay->pcm_batcher,
+            (int16_t *)&relay->audio_tx_frame[AUDIO_HEADER_BYTES],
+            NETWORK_FRAME_SAMPLES);
     if (relay->events == NULL || relay->stream_mutex == NULL
-            || relay->stream_queue_storage == NULL) {
+            || relay->stream_queue_storage == NULL
+            || relay->audio_tx_frame == NULL || !batcher_ready) {
+        free(relay->audio_tx_frame);
         free(relay->stream_queue_storage);
         if (relay->stream_mutex != NULL) {
             vSemaphoreDelete(relay->stream_mutex);
@@ -1017,6 +1058,7 @@ esp_err_t network_relay_create(network_relay_t **out_relay)
         STREAM_QUEUE_LENGTH, sizeof(stream_item_t),
         relay->stream_queue_storage, &relay->stream_queue_control);
     if (relay->stream_queue == NULL) {
+        free(relay->audio_tx_frame);
         free(relay->stream_queue_storage);
         vSemaphoreDelete(relay->stream_mutex);
         vEventGroupDelete(relay->events);
@@ -1060,7 +1102,9 @@ esp_err_t network_relay_create(network_relay_t **out_relay)
         return ESP_ERR_NO_MEM;
     }
     *out_relay = relay;
-    ESP_LOGI(TAG, "Dual-network Wi-Fi/WSS manager started");
+    ESP_LOGI(TAG,
+             "Dual-network Wi-Fi/WSS manager started capture=%u network=%u samples",
+             CAPTURE_CHUNK_SAMPLES, NETWORK_FRAME_SAMPLES);
     return ESP_OK;
 #endif
 }
@@ -1076,7 +1120,7 @@ bool network_relay_capture(network_relay_t *relay,
     }
     if (event == NETWORK_RELAY_CAPTURE_AUDIO
             && (samples == NULL || sample_count == 0
-                || sample_count > AUDIO_FRAME_SAMPLES)) {
+                || sample_count > CAPTURE_CHUNK_SAMPLES)) {
         return false;
     }
     if ((xEventGroupGetBits(relay->events) & SOCKET_READY_BIT) == 0
