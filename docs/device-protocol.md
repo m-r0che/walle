@@ -31,7 +31,7 @@ Control messages are UTF-8 JSON text frames, limited to 4,096 encoded bytes. Eve
 {"v":1,"type":"turn.cancel","turnId":"device-generated-id"}
 {"v":1,"type":"response.cancel","turnId":"device-generated-id"}
 {"v":1,"type":"playback.report","turnId":"device-generated-id","source":"local","samples":48000}
-{"v":1,"type":"telemetry.report","epoch":6,"state":6,"captureAccepting":false,"queueDepth":0,"startsQueued":3,"startUnready":1,"startMutexBusy":0,"startAlreadyActive":0,"turnsStarted":3,"turnsCommitted":3,"audioDropped":0,"protocolErrors":0,"socketRestarts":1}
+{"v":1,"type":"telemetry.report","epoch":6,"state":6,"captureAccepting":false,"queueDepth":0,"startsQueued":3,"startUnready":1,"startMutexBusy":0,"startAlreadyActive":0,"turnsStarted":3,"turnsCommitted":3,"audioDropped":0,"audioUnready":0,"audioMutexBusy":0,"audioNotAccepting":0,"audioBackpressure":0,"audioQueueFull":0,"audioStreamInactive":0,"audioSendFailures":0,"outputEventDrops":0,"protocolErrors":0,"socketRestarts":1}
 {"v":1,"type":"ping","nonce":"bounded-value"}
 ```
 

@@ -33,6 +33,14 @@ export type DeviceTelemetryReport = {
   turnsStarted: number;
   turnsCommitted: number;
   audioDropped: number;
+  audioUnready: number;
+  audioMutexBusy: number;
+  audioNotAccepting: number;
+  audioBackpressure: number;
+  audioQueueFull: number;
+  audioStreamInactive: number;
+  audioSendFailures: number;
+  outputEventDrops: number;
   protocolErrors: number;
   socketRestarts: number;
 };
@@ -197,6 +205,14 @@ export function decodeControlMessage(text: string): DeviceControlMessage {
         message.turnsStarted,
         message.turnsCommitted,
         message.audioDropped,
+        message.audioUnready,
+        message.audioMutexBusy,
+        message.audioNotAccepting,
+        message.audioBackpressure,
+        message.audioQueueFull,
+        message.audioStreamInactive,
+        message.audioSendFailures,
+        message.outputEventDrops,
         message.protocolErrors,
         message.socketRestarts,
       ];
@@ -210,7 +226,7 @@ export function decodeControlMessage(text: string): DeviceControlMessage {
           || counts.some((count) => typeof count !== "number"
             || !Number.isInteger(count) || count < 0
             || count > 0xffff_ffff)
-          || (message.queueDepth as number) > 32) {
+          || (message.queueDepth as number) > 640) {
         throw new Error("device telemetry is invalid");
       }
       return message as DeviceTelemetryReport;

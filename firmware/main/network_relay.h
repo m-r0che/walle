@@ -68,6 +68,13 @@ typedef struct {
     uint32_t audio_frames_queued;
     uint32_t audio_frames_sent;
     uint32_t audio_frames_dropped;
+    uint32_t audio_drop_unready;
+    uint32_t audio_drop_mutex_busy;
+    uint32_t audio_drop_not_accepting;
+    uint32_t audio_drop_backpressure;
+    uint32_t audio_drop_queue_full;
+    uint32_t audio_drop_stream_inactive;
+    uint32_t audio_send_failures;
     uint32_t echo_frames_received;
     uint32_t echo_mismatches;
     uint32_t output_frames_forwarded;

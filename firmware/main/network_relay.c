@@ -62,7 +62,7 @@
 #define CAPTURE_CHUNK_SAMPLES 256
 #define NETWORK_FRAME_SAMPLES 960
 #define MAX_TURN_SAMPLES 144000
-#define STREAM_QUEUE_LENGTH 32
+#define STREAM_QUEUE_LENGTH 640
 #define STREAM_CONTROL_RESERVE 2
 #define EXPECTED_ECHO_SLOTS 64
 
@@ -850,7 +850,7 @@ static bool send_network_telemetry(network_relay_t *relay)
 
     network_relay_snapshot_t snapshot;
     network_relay_get_snapshot(relay, &snapshot);
-    char message[512];
+    char message[768];
     const int length = snprintf(
         message, sizeof(message),
         "{\"v\":1,\"type\":\"telemetry.report\","
@@ -859,6 +859,10 @@ static bool send_network_telemetry(network_relay_t *relay)
         "\"startUnready\":%u,\"startMutexBusy\":%u,"
         "\"startAlreadyActive\":%u,\"turnsStarted\":%u,"
         "\"turnsCommitted\":%u,\"audioDropped\":%u,"
+        "\"audioUnready\":%u,\"audioMutexBusy\":%u,"
+        "\"audioNotAccepting\":%u,\"audioBackpressure\":%u,"
+        "\"audioQueueFull\":%u,\"audioStreamInactive\":%u,"
+        "\"audioSendFailures\":%u,\"outputEventDrops\":%u,"
         "\"protocolErrors\":%u,\"socketRestarts\":%u}",
         (unsigned)snapshot.connection_epoch,
         (unsigned)snapshot.state,
@@ -871,6 +875,14 @@ static bool send_network_telemetry(network_relay_t *relay)
         (unsigned)snapshot.turns_started,
         (unsigned)snapshot.turns_committed,
         (unsigned)snapshot.audio_frames_dropped,
+        (unsigned)snapshot.audio_drop_unready,
+        (unsigned)snapshot.audio_drop_mutex_busy,
+        (unsigned)snapshot.audio_drop_not_accepting,
+        (unsigned)snapshot.audio_drop_backpressure,
+        (unsigned)snapshot.audio_drop_queue_full,
+        (unsigned)snapshot.audio_drop_stream_inactive,
+        (unsigned)snapshot.audio_send_failures,
+        (unsigned)snapshot.output_events_dropped,
         (unsigned)snapshot.protocol_errors,
         (unsigned)snapshot.socket_restarts);
     return length > 0 && length < (int)sizeof(message)
@@ -925,6 +937,8 @@ static bool send_audio_frame(void *context, const int16_t *samples,
     expected->valid = false;
     portEXIT_CRITICAL(&relay->stream_lock);
     increment_counter(relay, &relay->snapshot.audio_frames_dropped);
+    increment_counter(relay, &relay->snapshot.audio_send_failures);
+    atomic_store(&relay->telemetry_dirty, true);
     xEventGroupSetBits(relay->events, SOCKET_RESTART_BIT);
     return false;
 }
@@ -989,6 +1003,9 @@ static void service_stream_queue(network_relay_t *relay)
             } else {
                 increment_counter(relay,
                                   &relay->snapshot.audio_frames_dropped);
+                increment_counter(
+                    relay, &relay->snapshot.audio_drop_stream_inactive);
+                atomic_store(&relay->telemetry_dirty, true);
             }
             break;
         case STREAM_EVENT_CAPTURE_COMMIT:
@@ -1439,6 +1456,9 @@ bool network_relay_capture(network_relay_t *relay,
         } else if (event == NETWORK_RELAY_CAPTURE_AUDIO) {
             increment_counter(relay,
                               &relay->snapshot.audio_frames_dropped);
+            increment_counter(relay,
+                              &relay->snapshot.audio_drop_unready);
+            atomic_store(&relay->telemetry_dirty, true);
         }
         return false;
     }
@@ -1450,6 +1470,9 @@ bool network_relay_capture(network_relay_t *relay,
         } else if (event == NETWORK_RELAY_CAPTURE_AUDIO) {
             increment_counter(relay,
                               &relay->snapshot.audio_frames_dropped);
+            increment_counter(relay,
+                              &relay->snapshot.audio_drop_mutex_busy);
+            atomic_store(&relay->telemetry_dirty, true);
         }
         return false;
     }
@@ -1464,11 +1487,22 @@ bool network_relay_capture(network_relay_t *relay,
             atomic_store(&relay->telemetry_dirty, true);
         }
         break;
-    case NETWORK_RELAY_CAPTURE_AUDIO:
-        allowed = relay->capture_accepting
-            && uxQueueSpacesAvailable(relay->stream_queue)
-                > STREAM_CONTROL_RESERVE;
+    case NETWORK_RELAY_CAPTURE_AUDIO: {
+        const bool accepting = atomic_load(&relay->capture_accepting);
+        const bool has_space = uxQueueSpacesAvailable(relay->stream_queue)
+            > STREAM_CONTROL_RESERVE;
+        allowed = accepting && has_space;
+        if (!accepting) {
+            increment_counter(
+                relay, &relay->snapshot.audio_drop_not_accepting);
+            atomic_store(&relay->telemetry_dirty, true);
+        } else if (!has_space) {
+            increment_counter(
+                relay, &relay->snapshot.audio_drop_backpressure);
+            atomic_store(&relay->telemetry_dirty, true);
+        }
         break;
+    }
     case NETWORK_RELAY_CAPTURE_COMMIT:
     case NETWORK_RELAY_CAPTURE_CANCEL:
         allowed = relay->capture_accepting;
@@ -1487,6 +1521,12 @@ bool network_relay_capture(network_relay_t *relay,
     }
     const bool queued = allowed && epoch != 0
         && xQueueSend(relay->stream_queue, &item, 0) == pdTRUE;
+    if (allowed && epoch != 0 && !queued
+            && event == NETWORK_RELAY_CAPTURE_AUDIO) {
+        increment_counter(relay,
+                          &relay->snapshot.audio_drop_queue_full);
+        atomic_store(&relay->telemetry_dirty, true);
+    }
     if (queued && event == NETWORK_RELAY_CAPTURE_START) {
         relay->capture_accepting = true;
         increment_counter(relay,
