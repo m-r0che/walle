@@ -237,7 +237,7 @@ static void handle_face_input(face_input_event_t event, void *opaque_context)
 
 static bool handle_committed_audio_stream(
     void *opaque_context, offline_echo_stream_event_t event,
-    const int16_t *samples, size_t sample_count)
+    uint32_t turn_token, const int16_t *samples, size_t sample_count)
 {
     app_context_t *context = opaque_context;
     if (context == NULL || context->network == NULL) {
@@ -258,11 +258,48 @@ static bool handle_committed_audio_stream(
     case OFFLINE_ECHO_STREAM_CANCEL:
         relay_event = NETWORK_RELAY_CAPTURE_CANCEL;
         break;
+    case OFFLINE_ECHO_STREAM_REMOTE_PLAYED:
+        return network_relay_report_playback(
+            context->network, turn_token, true, sample_count);
+    case OFFLINE_ECHO_STREAM_LOCAL_FALLBACK:
+        return network_relay_report_playback(
+            context->network, turn_token, false, sample_count);
     default:
         return false;
     }
     return network_relay_capture(context->network, relay_event,
-                                 samples, sample_count);
+                                 turn_token, samples, sample_count);
+}
+
+static bool handle_remote_output(
+    void *opaque_context, network_relay_output_event_t event,
+    uint32_t turn_token, const int16_t *samples,
+    size_t sample_count, uint32_t value_count)
+{
+    app_context_t *context = opaque_context;
+    if (context == NULL || context->echo == NULL) {
+        return false;
+    }
+    offline_echo_remote_event_t remote_event;
+    switch (event) {
+    case NETWORK_RELAY_OUTPUT_AUDIO:
+        remote_event = OFFLINE_ECHO_REMOTE_AUDIO;
+        break;
+    case NETWORK_RELAY_OUTPUT_DONE:
+        remote_event = OFFLINE_ECHO_REMOTE_DONE;
+        break;
+    case NETWORK_RELAY_OUTPUT_CANCELLED:
+        remote_event = OFFLINE_ECHO_REMOTE_CANCELLED;
+        break;
+    case NETWORK_RELAY_OUTPUT_INVALID:
+        remote_event = OFFLINE_ECHO_REMOTE_INVALID;
+        break;
+    default:
+        return false;
+    }
+    return offline_echo_receive_remote(
+        context->echo, remote_event, turn_token, samples,
+        sample_count, value_count);
 }
 
 static face_interaction_t interaction_for_audio(offline_echo_state_t state)
@@ -348,6 +385,12 @@ void app_main(void)
         ESP_LOGW(TAG, "Network relay initialization failed: %s",
                  esp_err_to_name(network_error));
     } else if (context.network != NULL) {
+        const esp_err_t output_error = network_relay_set_output_sink(
+            context.network, handle_remote_output, &context);
+        if (output_error != ESP_OK) {
+            ESP_LOGW(TAG, "Remote output observer failed: %s",
+                     esp_err_to_name(output_error));
+        }
         const esp_err_t sink_error = offline_echo_set_stream_sink(
             context.echo, handle_committed_audio_stream, &context);
         if (sink_error != ESP_OK) {
@@ -370,7 +413,7 @@ void app_main(void)
 
         if (snapshot.state != previous_state) {
             ESP_LOGI(TAG,
-                     "Audio state=%d committed=%d recorded=%ums rings=%u/%u/%ums overruns=%u underruns=%u muted=%d read_errors=%u write_errors=%u stream=%u/%u",
+                     "Audio state=%d committed=%d recorded=%ums rings=%u/%u/%ums overruns=%u underruns=%u muted=%d read_errors=%u write_errors=%u stream=%u/%u remote=%u/%u playback=%u/%u timeout=%u",
                      snapshot.state, snapshot.recording_committed,
                      (unsigned)snapshot.recorded_ms,
                      (unsigned)snapshot.precommit_buffered_ms,
@@ -381,7 +424,12 @@ void app_main(void)
                      snapshot.muted, (unsigned)snapshot.read_errors,
                      (unsigned)snapshot.write_errors,
                      (unsigned)snapshot.stream_audio_frames,
-                     (unsigned)snapshot.stream_drops);
+                     (unsigned)snapshot.stream_drops,
+                     (unsigned)snapshot.remote_audio_frames,
+                     (unsigned)snapshot.remote_event_drops,
+                     (unsigned)snapshot.remote_playbacks,
+                     (unsigned)snapshot.local_fallbacks,
+                     (unsigned)snapshot.remote_timeouts);
             previous_state = snapshot.state;
         }
 
@@ -401,7 +449,7 @@ void app_main(void)
                 network_relay_snapshot_t network_snapshot;
                 network_relay_get_snapshot(context.network, &network_snapshot);
                 ESP_LOGI(TAG,
-                         "Network state=%d selected=%d rssi=%d wifi=%u/%u socket=%u/%u restart=%u epoch=%u timeout=%u/%u heartbeat=%u/%u stale=%u protocol_errors=%u turns=%u/%u/%u audio=%u/%u/%u echo=%u/%u queue_high=%u internal=%u minimum=%u",
+                         "Network state=%d selected=%d rssi=%d wifi=%u/%u socket=%u/%u restart=%u epoch=%u timeout=%u/%u heartbeat=%u/%u stale=%u protocol_errors=%u turns=%u/%u/%u audio=%u/%u/%u echo=%u/%u output=%u/%u/%u reports=%u/%u queue_high=%u internal=%u minimum=%u",
                          network_snapshot.state,
                          network_snapshot.active_network + 1,
                          network_snapshot.rssi,
@@ -425,6 +473,11 @@ void app_main(void)
                          (unsigned)network_snapshot.audio_frames_dropped,
                          (unsigned)network_snapshot.echo_frames_received,
                          (unsigned)network_snapshot.echo_mismatches,
+                         (unsigned)network_snapshot.output_frames_forwarded,
+                         (unsigned)network_snapshot.output_events_dropped,
+                         (unsigned)network_snapshot.output_turns_done,
+                         (unsigned)network_snapshot.remote_playback_reports,
+                         (unsigned)network_snapshot.local_fallback_reports,
                          (unsigned)network_snapshot.stream_queue_high_water,
                          (unsigned)network_snapshot.free_internal_bytes,
                          (unsigned)network_snapshot.minimum_internal_bytes);

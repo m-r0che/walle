@@ -2,7 +2,7 @@
 
 **Branch:** `diagnostic/remote-echo-playback`
 
-**Status:** response-buffer module tested off-device; not integrated or flashed
+**Status:** integrated echo candidate built and tested off-device; not flashed
 
 ## Safety contract
 
@@ -42,6 +42,13 @@ cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
   firmware/tests/remote_event_queue_test.c \
   -o /tmp/remote_event_queue_test
 /tmp/remote_event_queue_test
+
+cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
+  -fno-omit-frame-pointer -Ifirmware/main \
+  firmware/main/remote_event_queue.c firmware/main/remote_response.c \
+  firmware/tests/remote_pipeline_test.c \
+  -o /tmp/remote_pipeline_test
+/tmp/remote_pipeline_test
 ```
 
 Covered behavior:
@@ -55,8 +62,22 @@ Covered behavior:
 - earliest-playback, completion, and exact deadline source selection;
 - event validation, bounded-full rejection, wraparound, FIFO order, and reset;
 - 100,000-event concurrent producer/consumer stress;
+- end-to-end queue → complete-response → source-selection → exact readout;
+- missing-frame and queue-overflow local-fallback paths with no partial readout;
 - ASan/UBSan execution.
+
+## Integrated candidate
+
+The branch now wires the tested modules into the existing owners:
+
+- The audio task assigns positive local turn tokens, preserves the local capture ring, drains remote events, validates the three sample counts, and exclusively selects/writes the playback source.
+- The WebSocket event task forwards only epoch/sequence/count/hash-validated output through the zero-wait SPSC queue.
+- The network manager retains 256 → 960 uplink batching, associates output with the local token, parses turn completion, and queues aggregate playback reports.
+- Remote completion waits no longer than 500 ms after release and never bypasses the existing 220 ms authored thinking interval.
+- Reconnect, event loss, mismatch, overflow, timeout, mute, interruption, and stale tokens leave local capture authoritative.
+
+No display files changed. `FRAME_SAMPLES` remains 256, `NETWORK_FRAME_SAMPLES` remains 960, and the CO5300 pacing path remains unchanged.
 
 ## Next controlled step
 
-Integrate both modules on this branch without changing the validated 256-sample codec cadence, 960-sample network batching, display path, or local rings. The first hardware candidate will retain echo mode and must pass exact remote playback plus timeout, mismatch, overflow, cancellation, reconnect, and local-fallback cases before any OpenAI connection is introduced.
+Commit and rebuild the exact candidate, then flash it with the validated `b926040d…` recovery set ready. The first hardware run will retain echo mode and must pass exact remote playback plus timeout, mismatch, overflow, cancellation, reconnect, local fallback, display soak, and true cold boot before any OpenAI connection is introduced.

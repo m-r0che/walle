@@ -13,13 +13,23 @@ typedef enum {
     OFFLINE_ECHO_STREAM_AUDIO,
     OFFLINE_ECHO_STREAM_COMMIT,
     OFFLINE_ECHO_STREAM_CANCEL,
+    OFFLINE_ECHO_STREAM_REMOTE_PLAYED,
+    OFFLINE_ECHO_STREAM_LOCAL_FALLBACK,
 } offline_echo_stream_event_t;
 
 typedef bool (*offline_echo_stream_sink_t)(
     void *context,
     offline_echo_stream_event_t event,
+    uint32_t turn_token,
     const int16_t *samples,
     size_t sample_count);
+
+typedef enum {
+    OFFLINE_ECHO_REMOTE_AUDIO = 0,
+    OFFLINE_ECHO_REMOTE_DONE,
+    OFFLINE_ECHO_REMOTE_CANCELLED,
+    OFFLINE_ECHO_REMOTE_INVALID,
+} offline_echo_remote_event_t;
 
 typedef enum {
     OFFLINE_ECHO_IDLE = 0,
@@ -45,6 +55,11 @@ typedef struct {
     uint32_t write_errors;
     uint32_t stream_audio_frames;
     uint32_t stream_drops;
+    uint32_t remote_audio_frames;
+    uint32_t remote_event_drops;
+    uint32_t remote_playbacks;
+    uint32_t local_fallbacks;
+    uint32_t remote_timeouts;
     esp_err_t last_error;
 } offline_echo_snapshot_t;
 
@@ -62,6 +77,18 @@ esp_err_t offline_echo_create(offline_echo_t **out_echo);
 esp_err_t offline_echo_set_stream_sink(offline_echo_t *echo,
                                        offline_echo_stream_sink_t sink,
                                        void *context);
+
+/**
+ * Non-blocking SPSC producer seam for already-validated remote output. The
+ * WebSocket event task may call this; only the audio task consumes events and
+ * owns response validation, source selection, and codec writes.
+ */
+bool offline_echo_receive_remote(offline_echo_t *echo,
+                                 offline_echo_remote_event_t event,
+                                 uint32_t turn_token,
+                                 const int16_t *samples,
+                                 size_t sample_count,
+                                 uint32_t value_count);
 
 /** Start capturing a new phrase. Returns ESP_ERR_INVALID_STATE when muted/busy. */
 esp_err_t offline_echo_record_start(offline_echo_t *echo);
