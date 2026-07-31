@@ -6,32 +6,39 @@
 #include "lvgl.h"
 
 typedef enum {
-    FACE_EMOTION_NEUTRAL = 0,
-    FACE_EMOTION_HAPPY,
-    FACE_EMOTION_DOUBTFUL,
-    FACE_EMOTION_SLEEPY,
-    FACE_EMOTION_PEEK,
-    FACE_EMOTION_SURPRISED,
-    FACE_EMOTION_INTERESTED,
-    FACE_EMOTION_DEVIOUS,
-    FACE_EMOTION_ANGRY,
-    FACE_EMOTION_FURIOUS,
-    FACE_EMOTION_SAD,
-    FACE_EMOTION_COUNT,
-} face_emotion_t;
+    FACE_MOOD_CALM = 0,
+    FACE_MOOD_WARM,
+    FACE_MOOD_CURIOUS,
+    FACE_MOOD_DELIGHTED,
+    FACE_MOOD_UNCERTAIN,
+    FACE_MOOD_CONCERNED,
+    FACE_MOOD_SLEEPY,
+    FACE_MOOD_COUNT,
+} face_mood_t;
 
 typedef enum {
-    FACE_INTERACTION_IDLE = 0,
-    FACE_INTERACTION_LISTENING,
-    FACE_INTERACTION_THINKING,
-    FACE_INTERACTION_SPEAKING,
-    FACE_INTERACTION_CONFIRM,
-    FACE_INTERACTION_SUCCESS,
-    FACE_INTERACTION_ERROR,
-    FACE_INTERACTION_OFFLINE,
-    FACE_INTERACTION_SLEEPING,
-    FACE_INTERACTION_COUNT,
-} face_interaction_t;
+    FACE_ACTIVITY_IDLE = 0,
+    FACE_ACTIVITY_LISTENING,
+    FACE_ACTIVITY_THINKING,
+    FACE_ACTIVITY_SPEAKING,
+    FACE_ACTIVITY_CONFIRM,
+    FACE_ACTIVITY_SUCCESS,
+    FACE_ACTIVITY_ERROR,
+    FACE_ACTIVITY_OFFLINE,
+    FACE_ACTIVITY_SLEEPING,
+    FACE_ACTIVITY_COUNT,
+} face_activity_t;
+
+typedef enum {
+    FACE_REACTION_FOCUS = 0,
+    FACE_REACTION_REALISE,
+    FACE_REACTION_STARTLE,
+    FACE_REACTION_TOUCH_HAPPY,
+    FACE_REACTION_GLANCE_LEFT,
+    FACE_REACTION_GLANCE_RIGHT,
+    FACE_REACTION_WINK,
+    FACE_REACTION_COUNT,
+} face_reaction_t;
 
 typedef enum {
     FACE_INPUT_PTT_START = 0,
@@ -42,12 +49,24 @@ typedef enum {
 typedef struct face face_t;
 typedef void (*face_input_callback_t)(face_input_event_t event, void *context);
 
+/** Create the local living-face engine and its autonomous animation timer. */
 face_t *face_create(lv_obj_t *parent);
+
 void face_set_input_callback(face_t *face, face_input_callback_t callback,
                              void *context);
-void face_set_emotion(face_t *face, face_emotion_t emotion);
-face_emotion_t face_get_emotion(face_t *face);
-void face_set_interaction(face_t *face, face_interaction_t interaction);
-void face_set_mouth_level(face_t *face, float level);
+
+/** Set the truthful device-owned conversational activity. */
+void face_set_activity(face_t *face, face_activity_t activity);
+
+/** Set the slow personality bias. Intensity is clamped to 0.0–1.0. */
+void face_set_mood(face_t *face, face_mood_t mood, float intensity);
+face_mood_t face_get_mood(face_t *face);
+
+/** Start a bounded local reaction which eases back into the underlying face. */
+void face_react(face_t *face, face_reaction_t reaction, float intensity);
+
+/** Supply the envelope of PCM samples actually entering the codec. */
+void face_set_playback_level(face_t *face, float level);
+
 void face_set_muted(face_t *face, bool muted);
 void face_set_output_volume(face_t *face, uint8_t volume_percent);

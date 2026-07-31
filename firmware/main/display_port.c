@@ -22,6 +22,9 @@
 // internal RAM for the former 220-row buffer, so use two 110-row regions and
 // pace every submission to the known-visible ~28-transfer/second envelope.
 #define DISPLAY_DRAW_ROWS 110
+#define DISPLAY_H_RES BSP_LCD_V_RES
+#define DISPLAY_V_RES BSP_LCD_H_RES
+#define DISPLAY_V2_ROTATED_Y_GAP 16
 #define MIN_TRANSFER_INTERVAL_US 35000
 #define DISPLAY_BRIGHTNESS_PERCENT 45
 
@@ -141,7 +144,20 @@ lv_display_t *display_port_start(void)
         return NULL;
     }
 
-    const size_t buffer_pixels = BSP_LCD_H_RES * DISPLAY_DRAW_ROWS;
+    // Rotate in the CO5300 rather than allocating LVGL's additional software-
+    // rotation buffer. For the confirmed CST816S/CO5300 V2, the portrait
+    // controller's 16-pixel X gap becomes a Y gap in landscape.
+    error = esp_lcd_panel_swap_xy(s_port.panel, true);
+    if (error == ESP_OK) {
+        error = esp_lcd_panel_mirror(s_port.panel, false, true);
+    }
+    if (error != ESP_OK) {
+        ESP_LOGE(TAG, "Panel landscape rotation failed: %s",
+                 esp_err_to_name(error));
+        return NULL;
+    }
+
+    const size_t buffer_pixels = DISPLAY_H_RES * DISPLAY_DRAW_ROWS;
     s_port.draw_buffer = heap_caps_aligned_alloc(
         64, buffer_pixels * sizeof(*s_port.draw_buffer),
         MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
@@ -154,7 +170,7 @@ lv_display_t *display_port_start(void)
         ESP_LOGE(TAG, "LVGL lock failed");
         return NULL;
     }
-    s_port.display = lv_display_create(BSP_LCD_H_RES, BSP_LCD_V_RES);
+    s_port.display = lv_display_create(DISPLAY_H_RES, DISPLAY_V_RES);
     if (s_port.display != NULL) {
         lv_display_set_color_format(s_port.display, LV_COLOR_FORMAT_RGB565);
         lv_display_set_buffers(s_port.display, s_port.draw_buffer, NULL,
@@ -192,6 +208,22 @@ lv_display_t *display_port_start(void)
                  esp_err_to_name(error));
         return NULL;
     }
+    error = esp_lcd_panel_set_gap(s_port.panel, 0,
+                                  DISPLAY_V2_ROTATED_Y_GAP);
+    if (error == ESP_OK) {
+        error = esp_lcd_touch_set_mirror_x(touch, true);
+    }
+    if (error == ESP_OK) {
+        error = esp_lcd_touch_set_mirror_y(touch, false);
+    }
+    if (error == ESP_OK) {
+        error = esp_lcd_touch_set_swap_xy(touch, true);
+    }
+    if (error != ESP_OK) {
+        ESP_LOGE(TAG, "Touch landscape rotation failed: %s",
+                 esp_err_to_name(error));
+        return NULL;
+    }
     const lvgl_port_touch_cfg_t touch_config = {
         .disp = s_port.display,
         .handle = touch,
@@ -202,7 +234,8 @@ lv_display_t *display_port_start(void)
     }
 
     ESP_LOGI(TAG,
-             "QSPI display ready: one %u-row internal DMA buffer, minimum interval=%uus",
+             "QSPI display ready: %ux%u landscape, one %u-row internal DMA buffer, minimum interval=%uus",
+             (unsigned)DISPLAY_H_RES, (unsigned)DISPLAY_V_RES,
              (unsigned)DISPLAY_DRAW_ROWS,
              (unsigned)MIN_TRANSFER_INTERVAL_US);
     return s_port.display;

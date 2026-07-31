@@ -120,22 +120,22 @@ static void handle_volume_button(lv_event_t *event)
 }
 
 typedef struct {
-    face_emotion_t emotion;
+    face_mood_t mood;
+    face_reaction_t reaction;
+    bool trigger_reaction;
     const char *label;
 } face_demo_state_t;
 
 static const face_demo_state_t s_face_demo_states[] = {
-    {FACE_EMOTION_NEUTRAL, "OPEN"},
-    {FACE_EMOTION_PEEK, "PEEK"},
-    {FACE_EMOTION_SURPRISED, "WHAT?!"},
-    {FACE_EMOTION_SLEEPY, "DOZY"},
-    {FACE_EMOTION_DOUBTFUL, "WORRY"},
-    {FACE_EMOTION_HAPPY, "HAPPY"},
-    {FACE_EMOTION_INTERESTED, "CURIOUS"},
-    {FACE_EMOTION_DEVIOUS, "DEVIOUS"},
-    {FACE_EMOTION_ANGRY, "ANGRY"},
-    {FACE_EMOTION_FURIOUS, "FURY"},
-    {FACE_EMOTION_SAD, "SAD"},
+    {FACE_MOOD_WARM, FACE_REACTION_FOCUS, false, "WARM"},
+    {FACE_MOOD_CURIOUS, FACE_REACTION_GLANCE_RIGHT, true, "CURIOUS"},
+    {FACE_MOOD_DELIGHTED, FACE_REACTION_TOUCH_HAPPY, true, "DELIGHT"},
+    {FACE_MOOD_UNCERTAIN, FACE_REACTION_GLANCE_LEFT, true, "UNSURE"},
+    {FACE_MOOD_CONCERNED, FACE_REACTION_FOCUS, false, "CONCERN"},
+    {FACE_MOOD_SLEEPY, FACE_REACTION_FOCUS, false, "SLEEPY"},
+    {FACE_MOOD_WARM, FACE_REACTION_REALISE, true, "REALISE"},
+    {FACE_MOOD_CALM, FACE_REACTION_STARTLE, true, "STARTLE"},
+    {FACE_MOOD_WARM, FACE_REACTION_WINK, true, "WINK"},
 };
 
 static void handle_face_demo_button(lv_event_t *event)
@@ -148,18 +148,22 @@ static void handle_face_demo_button(lv_event_t *event)
         % (sizeof(s_face_demo_states) / sizeof(s_face_demo_states[0]));
     const face_demo_state_t *state =
         &s_face_demo_states[context->face_demo_index];
-    face_set_emotion(context->face, state->emotion);
+    face_set_mood(context->face, state->mood, 0.82f);
+    if (state->trigger_reaction) {
+        face_react(context->face, state->reaction, 0.92f);
+    }
     lv_label_set_text(context->face_demo_label, state->label);
     ESP_LOGI(TAG, "Face demo=%s", state->label);
 }
 
 static lv_obj_t *create_control_button(lv_obj_t *parent, const char *text,
-                                       int32_t x, lv_event_cb_t callback,
+                                       int32_t x, int32_t width,
+                                       lv_event_cb_t callback,
                                        app_context_t *context)
 {
     lv_obj_t *button = lv_button_create(parent);
-    lv_obj_set_size(button, 72, 52);
-    lv_obj_set_pos(button, x, 368);
+    lv_obj_set_size(button, width, 48);
+    lv_obj_set_pos(button, x, 302);
     lv_obj_set_ext_click_area(button, 14);
     lv_obj_set_style_radius(button, 26, LV_PART_MAIN);
     lv_obj_set_style_bg_color(button, lv_color_hex(0x00151a), LV_PART_MAIN);
@@ -184,17 +188,17 @@ static bool start_volume_controls(app_context_t *context)
     }
     lv_obj_t *screen = lv_screen_active();
     context->volume_down_button = create_control_button(
-        screen, "-", 32, handle_volume_button, context);
+        screen, "-", 28, 68, handle_volume_button, context);
     context->volume_up_button = create_control_button(
-        screen, "+", 264, handle_volume_button, context);
+        screen, "+", 352, 68, handle_volume_button, context);
     lv_obj_t *face_demo_button = create_control_button(
-        screen, s_face_demo_states[0].label, 148,
+        screen, s_face_demo_states[0].label, 172, 104,
         handle_face_demo_button, context);
     context->face_demo_label = lv_obj_get_child(face_demo_button, 0);
 
     context->volume_label = lv_label_create(screen);
     lv_obj_set_width(context->volume_label, 96);
-    lv_obj_set_pos(context->volume_label, 136, 343);
+    lv_obj_set_pos(context->volume_label, 176, 280);
     lv_obj_set_style_text_align(context->volume_label, LV_TEXT_ALIGN_CENTER,
                                 LV_PART_MAIN);
     lv_obj_set_style_text_color(context->volume_label,
@@ -306,20 +310,20 @@ static bool handle_remote_output(
         sample_count, value_count, input_count);
 }
 
-static face_interaction_t interaction_for_audio(offline_echo_state_t state)
+static face_activity_t activity_for_audio(offline_echo_state_t state)
 {
     switch (state) {
     case OFFLINE_ECHO_RECORDING:
-        return FACE_INTERACTION_LISTENING;
+        return FACE_ACTIVITY_LISTENING;
     case OFFLINE_ECHO_PREPARING:
-        return FACE_INTERACTION_THINKING;
+        return FACE_ACTIVITY_THINKING;
     case OFFLINE_ECHO_PLAYING:
-        return FACE_INTERACTION_SPEAKING;
+        return FACE_ACTIVITY_SPEAKING;
     case OFFLINE_ECHO_ERROR:
-        return FACE_INTERACTION_ERROR;
+        return FACE_ACTIVITY_ERROR;
     case OFFLINE_ECHO_IDLE:
     default:
-        return FACE_INTERACTION_IDLE;
+        return FACE_ACTIVITY_IDLE;
     }
 }
 
@@ -358,7 +362,7 @@ void app_main(void)
     if (audio_error != ESP_OK) {
         ESP_LOGE(TAG, "Audio initialization failed: %s",
                  esp_err_to_name(audio_error));
-        face_set_interaction(context.face, FACE_INTERACTION_ERROR);
+        face_set_activity(context.face, FACE_ACTIVITY_ERROR);
         while (true) {
             vTaskDelay(pdMS_TO_TICKS(10000));
         }
@@ -408,9 +412,9 @@ void app_main(void)
     while (true) {
         offline_echo_snapshot_t snapshot;
         offline_echo_get_snapshot(context.echo, &snapshot);
-        face_set_interaction(context.face,
-                             interaction_for_audio(snapshot.state));
-        face_set_mouth_level(context.face, snapshot.playback_level);
+        face_set_activity(context.face,
+                          activity_for_audio(snapshot.state));
+        face_set_playback_level(context.face, snapshot.playback_level);
         face_set_muted(context.face, snapshot.muted);
         face_set_output_volume(context.face,
                                snapshot.output_volume_percent);
