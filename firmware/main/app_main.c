@@ -9,6 +9,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lvgl.h"
+#include "motion_sensor.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "network_relay.h"
@@ -22,17 +23,16 @@ static const char *TAG = "walle";
 #define VOLUME_STEP 10
 #define SETTINGS_NAMESPACE "walle"
 #define VOLUME_KEY "volume"
+#define SLEEP_AFTER_STILL_MS 60000
 
 typedef struct {
     face_t *face;
     offline_echo_t *echo;
     network_relay_t *network;
+    motion_sensor_t *motion;
     lv_obj_t *volume_label;
     lv_obj_t *volume_down_button;
     lv_obj_t *volume_up_button;
-    lv_obj_t *face_demo_label;
-    uint8_t face_demo_index;
-    bool muted;
     uint8_t output_volume;
     nvs_handle_t settings;
     bool settings_open;
@@ -119,43 +119,6 @@ static void handle_volume_button(lv_event_t *event)
     ESP_LOGI(TAG, "Volume selected=%u%%", (unsigned)next_volume);
 }
 
-typedef struct {
-    face_mood_t mood;
-    face_reaction_t reaction;
-    bool trigger_reaction;
-    const char *label;
-} face_demo_state_t;
-
-static const face_demo_state_t s_face_demo_states[] = {
-    {FACE_MOOD_WARM, FACE_REACTION_FOCUS, false, "WARM"},
-    {FACE_MOOD_CURIOUS, FACE_REACTION_GLANCE_RIGHT, true, "CURIOUS"},
-    {FACE_MOOD_DELIGHTED, FACE_REACTION_TOUCH_HAPPY, true, "DELIGHT"},
-    {FACE_MOOD_UNCERTAIN, FACE_REACTION_GLANCE_LEFT, true, "UNSURE"},
-    {FACE_MOOD_CONCERNED, FACE_REACTION_FOCUS, false, "CONCERN"},
-    {FACE_MOOD_SLEEPY, FACE_REACTION_FOCUS, false, "SLEEPY"},
-    {FACE_MOOD_WARM, FACE_REACTION_REALISE, true, "REALISE"},
-    {FACE_MOOD_CALM, FACE_REACTION_STARTLE, true, "STARTLE"},
-    {FACE_MOOD_WARM, FACE_REACTION_WINK, true, "WINK"},
-};
-
-static void handle_face_demo_button(lv_event_t *event)
-{
-    if (lv_event_get_code(event) != LV_EVENT_PRESSED) {
-        return;
-    }
-    app_context_t *context = lv_event_get_user_data(event);
-    context->face_demo_index = (context->face_demo_index + 1)
-        % (sizeof(s_face_demo_states) / sizeof(s_face_demo_states[0]));
-    const face_demo_state_t *state =
-        &s_face_demo_states[context->face_demo_index];
-    face_set_mood(context->face, state->mood, 0.82f);
-    if (state->trigger_reaction) {
-        face_react(context->face, state->reaction, 0.92f);
-    }
-    lv_label_set_text(context->face_demo_label, state->label);
-    ESP_LOGI(TAG, "Face demo=%s", state->label);
-}
-
 static lv_obj_t *create_control_button(lv_obj_t *parent, const char *text,
                                        int32_t x, int32_t width,
                                        lv_event_cb_t callback,
@@ -191,14 +154,9 @@ static bool start_volume_controls(app_context_t *context)
         screen, "-", 20, 48, handle_volume_button, context);
     context->volume_up_button = create_control_button(
         screen, "+", 380, 48, handle_volume_button, context);
-    lv_obj_t *face_demo_button = create_control_button(
-        screen, s_face_demo_states[0].label, 184, 80,
-        handle_face_demo_button, context);
-    context->face_demo_label = lv_obj_get_child(face_demo_button, 0);
-
     context->volume_label = lv_label_create(screen);
     lv_obj_set_width(context->volume_label, 96);
-    lv_obj_set_pos(context->volume_label, 176, 306);
+    lv_obj_set_pos(context->volume_label, 176, 332);
     lv_obj_set_style_text_align(context->volume_label, LV_TEXT_ALIGN_CENTER,
                                 LV_PART_MAIN);
     lv_obj_set_style_text_color(context->volume_label,
@@ -225,12 +183,6 @@ static void handle_face_input(face_input_event_t event, void *opaque_context)
         if (error == ESP_OK) {
             ESP_LOGI(TAG, "PTT released");
         }
-        break;
-    case FACE_INPUT_MUTE_TOGGLE:
-        context->muted = !context->muted;
-        error = offline_echo_set_muted(context->echo, context->muted);
-        face_set_muted(context->face, context->muted);
-        ESP_LOGI(TAG, "Mute toggled=%d", context->muted);
         break;
     }
 
@@ -377,7 +329,6 @@ void app_main(void)
             context.output_volume = DEFAULT_OUTPUT_VOLUME;
         }
     }
-    face_set_output_volume(context.face, context.output_volume);
     face_set_input_callback(context.face, handle_face_input, &context);
     if (!start_volume_controls(&context)) {
         ESP_LOGW(TAG, "Volume controls could not be created");
@@ -385,8 +336,14 @@ void app_main(void)
     // A second reset/init after the first visible LVGL frame reproducibly
     // blanks the CO5300 on a cold power-on. The initial display_port_start()
     // initialization is authoritative; transfer pacing begins immediately.
-    ESP_LOGI(TAG, "Ready: hold face for PTT; lower-left=mute; bottom buttons set volume (%u%%)",
+    ESP_LOGI(TAG, "Ready: hold face for PTT; corner buttons set volume (%u%%)",
              (unsigned)context.output_volume);
+
+    const esp_err_t motion_error = motion_sensor_create(&context.motion);
+    if (motion_error != ESP_OK) {
+        ESP_LOGW(TAG, "Motion sensor initialization failed: %s",
+                 esp_err_to_name(motion_error));
+    }
 
     const esp_err_t network_error = network_relay_create(&context.network);
     if (network_error != ESP_OK && network_error != ESP_ERR_NOT_SUPPORTED) {
@@ -408,18 +365,46 @@ void app_main(void)
     }
 
     offline_echo_state_t previous_state = OFFLINE_ECHO_ERROR;
-    TickType_t next_display_report = xTaskGetTickCount() + pdMS_TO_TICKS(5000);
+    uint32_t observed_motion_events = 0;
+    bool sleeping = false;
+    TickType_t last_presence = xTaskGetTickCount();
+    TickType_t next_display_report = last_presence + pdMS_TO_TICKS(5000);
     while (true) {
+        const TickType_t now = xTaskGetTickCount();
         offline_echo_snapshot_t snapshot;
         offline_echo_get_snapshot(context.echo, &snapshot);
-        face_set_activity(context.face,
-                          activity_for_audio(snapshot.state));
+        motion_sensor_snapshot_t motion_snapshot;
+        motion_sensor_get_snapshot(context.motion, &motion_snapshot);
+
+        if (motion_snapshot.motion_events != observed_motion_events) {
+            observed_motion_events = motion_snapshot.motion_events;
+            last_presence = now;
+            if (sleeping) {
+                sleeping = false;
+                face_react(context.face, FACE_REACTION_FOCUS, 0.92f);
+                ESP_LOGI(TAG, "Woke from local motion");
+            }
+        }
+        if (snapshot.state != OFFLINE_ECHO_IDLE) {
+            last_presence = now;
+            sleeping = false;
+        } else if (!sleeping && motion_snapshot.ready
+                   && (now - last_presence)
+                       >= pdMS_TO_TICKS(SLEEP_AFTER_STILL_MS)) {
+            sleeping = true;
+            ESP_LOGI(TAG, "Sleeping after local stillness");
+        }
+
+        face_set_activity(context.face, sleeping
+                          ? FACE_ACTIVITY_SLEEPING
+                          : activity_for_audio(snapshot.state));
         face_set_playback_level(context.face, snapshot.playback_level);
-        face_set_muted(context.face, snapshot.muted);
-        face_set_output_volume(context.face,
-                               snapshot.output_volume_percent);
 
         if (snapshot.state != previous_state) {
+            if (snapshot.state == OFFLINE_ECHO_PLAYING
+                    && previous_state == OFFLINE_ECHO_PREPARING) {
+                face_react(context.face, FACE_REACTION_REALISE, 0.62f);
+            }
             ESP_LOGI(TAG,
                      "Audio state=%d committed=%d recorded=%ums rings=%u/%u/%ums overruns=%u underruns=%u muted=%d read_errors=%u write_errors=%u stream=%u/%u remote=%u/%u playback=%u/%u timeout=%u",
                      snapshot.state, snapshot.recording_committed,
@@ -441,18 +426,22 @@ void app_main(void)
             previous_state = snapshot.state;
         }
 
-        const TickType_t now = xTaskGetTickCount();
         if ((int32_t)(now - next_display_report) >= 0) {
             display_port_snapshot_t display_snapshot;
             display_port_get_snapshot(&display_snapshot);
             ESP_LOGI(TAG,
-                     "Display submitted=%u completed=%u submit_errors=%u overlaps=%u paced=%u wait_ms=%u",
+                     "Display submitted=%u completed=%u submit_errors=%u overlaps=%u paced=%u wait_ms=%u motion=%d/%u/%.2f/%u sleeping=%d",
                      (unsigned)display_snapshot.submitted,
                      (unsigned)display_snapshot.completed,
                      (unsigned)display_snapshot.submit_errors,
                      (unsigned)display_snapshot.overlap_errors,
                      (unsigned)display_snapshot.pacing_delays,
-                     (unsigned)display_snapshot.pacing_wait_ms);
+                     (unsigned)display_snapshot.pacing_wait_ms,
+                     motion_snapshot.ready,
+                     (unsigned)motion_snapshot.motion_events,
+                     motion_snapshot.motion_score,
+                     (unsigned)motion_snapshot.read_errors,
+                     sleeping);
             if (context.network != NULL) {
                 network_relay_snapshot_t network_snapshot;
                 network_relay_get_snapshot(context.network, &network_snapshot);

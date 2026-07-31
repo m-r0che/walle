@@ -27,9 +27,6 @@
 #define BROW_POINT_COUNT 9
 #define MOUTH_POINT_COUNT 13
 #define PI_F 3.14159265358979323846f
-#define MUTE_CONTROL_X 35
-#define MUTE_CONTROL_Y 250
-#define MUTE_CONTROL_HIT_RADIUS 25
 
 static const char *TAG = "face";
 
@@ -81,12 +78,9 @@ struct face {
     face_mood_t mood;
     float mood_intensity;
     float playback_level;
-    bool muted;
-    uint8_t output_volume_percent;
     face_input_callback_t input_callback;
     void *input_context;
     bool ptt_pressed;
-    bool mute_pressed;
 
     face_reaction_t requested_reaction;
     float requested_reaction_intensity;
@@ -95,6 +89,7 @@ struct face {
     face_reaction_t active_reaction;
     float active_reaction_intensity;
     uint32_t reaction_started_ms;
+    uint32_t next_idle_reaction_ms;
 
     face_pose_t pose;
     uint32_t last_pose_ms;
@@ -545,6 +540,24 @@ static face_pose_t compose_target(face_t *face, uint32_t now,
         face->reaction_started_ms = now;
     }
 
+    if (activity == FACE_ACTIVITY_IDLE
+            && face->reaction_started_ms == 0
+            && time_reached(now, face->next_idle_reaction_ms)) {
+        const uint32_t choice = esp_random() % 12;
+        if (choice < 5) {
+            face->active_reaction = FACE_REACTION_GLANCE_LEFT;
+        } else if (choice < 10) {
+            face->active_reaction = FACE_REACTION_GLANCE_RIGHT;
+        } else if (choice == 10) {
+            face->active_reaction = FACE_REACTION_FOCUS;
+        } else {
+            face->active_reaction = FACE_REACTION_WINK;
+        }
+        face->active_reaction_intensity = choice == 11 ? 0.58f : 0.42f;
+        face->reaction_started_ms = now;
+        face->next_idle_reaction_ms = now + random_range(8000, 17000);
+    }
+
     float reaction_amount = 0.0f;
     if (face->reaction_started_ms != 0) {
         const uint32_t duration = reaction_duration_ms(face->active_reaction);
@@ -680,23 +693,6 @@ static void draw_disc(face_t *face, int32_t center_x, int32_t center_y,
     }
 }
 
-static void clear_disc(face_t *face, int32_t center_x, int32_t center_y,
-                       int32_t radius)
-{
-    const int32_t radius_squared = radius * radius;
-    for (int32_t y = -radius; y <= radius; y++) {
-        for (int32_t x = -radius; x <= radius; x++) {
-            if (x * x + y * y <= radius_squared) {
-                uint16_t *pixel = canvas_pixel_at(face, center_x + x,
-                                                   center_y + y);
-                if (pixel != NULL) {
-                    *pixel = 0;
-                }
-            }
-        }
-    }
-}
-
 static void draw_raster_segment(face_t *face,
                                 const lv_point_precise_t *start,
                                 const lv_point_precise_t *end,
@@ -805,18 +801,12 @@ static void draw_eye(face_t *face, float center_x, float center_y,
                                   * clampf(openness, 0.3f, 1.0f)),
     };
     transform_point(&pupil_center, tilt, vertical_offset);
-    const int32_t outer_radius = LV_MAX(7, (int32_t)(17.0f * pupil_scale));
-    const int32_t iris_radius = LV_MAX(5, (int32_t)(13.0f * pupil_scale));
-    const int32_t pupil_radius = LV_MAX(3, (int32_t)(7.0f * pupil_scale));
-    draw_disc(face, pupil_center.x, pupil_center.y, outer_radius,
-              pack_dimmed_color((raster_color_t){0x00, 0x67, 0x75}, 170));
-    draw_disc(face, pupil_center.x, pupil_center.y, iris_radius,
-              pack_dimmed_color((raster_color_t){0xb9, 0xff, 0xff}, 195));
-    clear_disc(face, pupil_center.x, pupil_center.y, pupil_radius);
-    if (pupil_scale > 0.62f) {
-        draw_disc(face, pupil_center.x - 4, pupil_center.y - 5, 2,
-                  pack_dimmed_color((raster_color_t){0xff, 0xff, 0xff}, 255));
-    }
+    const int32_t halo_radius = LV_MAX(5, (int32_t)(11.0f * pupil_scale));
+    const int32_t core_radius = LV_MAX(3, (int32_t)(5.5f * pupil_scale));
+    draw_disc(face, pupil_center.x, pupil_center.y, halo_radius,
+              pack_dimmed_color((raster_color_t){0x00, 0x67, 0x75}, 125));
+    draw_disc(face, pupil_center.x, pupil_center.y, core_radius,
+              pack_dimmed_color((raster_color_t){0xb9, 0xff, 0xff}, 255));
 }
 
 static void build_brow(brow_curve_t *brow, float center_x, float lift,
@@ -902,31 +892,22 @@ static void draw_realisation_spark(face_t *face, float amount)
     draw_glow_curve(face, vertical, 2, false);
 }
 
-static void draw_mute_control(face_t *face, bool muted)
+static void draw_sleep_z(face_t *face, int32_t x, int32_t y, int32_t size)
 {
-    lv_point_precise_t ring[13];
-    for (size_t index = 0; index < 13; index++) {
-        const float angle = (float)index * 2.0f * PI_F / 12.0f;
-        ring[index].x = MUTE_CONTROL_X
-            + (lv_value_precise_t)(cosf(angle) * 7.0f);
-        ring[index].y = MUTE_CONTROL_Y
-            + (lv_value_precise_t)(sinf(angle) * 7.0f);
-    }
-    if (!muted) {
-        draw_glow_curve(face, ring, 13, false);
-        return;
-    }
-
-    const raster_color_t coral = {0xff, 0x72, 0x62};
-    const uint16_t color = pack_dimmed_color(coral, 255);
-    for (size_t index = 1; index < 13; index++) {
-        draw_raster_segment(face, &ring[index - 1], &ring[index], 2, color);
-    }
-    const lv_point_precise_t slash[] = {
-        {MUTE_CONTROL_X - 7, MUTE_CONTROL_Y - 7},
-        {MUTE_CONTROL_X + 7, MUTE_CONTROL_Y + 7},
+    const lv_point_precise_t points[] = {
+        {x, y},
+        {x + size, y},
+        {x, y + size},
+        {x + size, y + size},
     };
-    draw_raster_segment(face, &slash[0], &slash[1], 2, color);
+    draw_glow_curve(face, points, 4, false);
+}
+
+static void draw_sleep_symbols(face_t *face, float seconds)
+{
+    const int32_t drift = (int32_t)fmodf(seconds * 7.0f, 28.0f);
+    draw_sleep_z(face, 375, 154 - drift, 13);
+    draw_sleep_z(face, 397, 118 - drift / 2, 9);
 }
 
 static void render_face(face_t *face, uint32_t now)
@@ -936,7 +917,6 @@ static void render_face(face_t *face, uint32_t now)
     face_mood_t mood;
     float mood_intensity;
     float playback_level;
-    bool muted;
     face_reaction_t requested_reaction;
     float requested_reaction_intensity;
     uint32_t reaction_generation;
@@ -945,7 +925,6 @@ static void render_face(face_t *face, uint32_t now)
     mood = face->mood;
     mood_intensity = face->mood_intensity;
     playback_level = face->playback_level;
-    muted = face->muted;
     requested_reaction = face->requested_reaction;
     requested_reaction_intensity = face->requested_reaction_intensity;
     reaction_generation = face->reaction_generation;
@@ -981,7 +960,9 @@ static void render_face(face_t *face, uint32_t now)
     if (face->active_reaction == FACE_REACTION_REALISE) {
         draw_realisation_spark(face, reaction_amount);
     }
-    draw_mute_control(face, muted);
+    if (activity == FACE_ACTIVITY_SLEEPING) {
+        draw_sleep_symbols(face, seconds);
+    }
 
     lv_draw_buf_flush_cache(lv_canvas_get_draw_buf(face->canvas), NULL);
     lv_obj_invalidate(face->canvas);
@@ -1062,29 +1043,14 @@ static void notify_input(face_t *face, face_input_event_t input_event)
     }
 }
 
-static bool point_hits_mute_control(const face_t *face,
-                                    const lv_point_t *point)
-{
-    const int32_t dx = point->x - (MUTE_CONTROL_X + face->drift_x);
-    const int32_t dy = point->y - (MUTE_CONTROL_Y + face->drift_y);
-    return dx * dx + dy * dy
-        <= MUTE_CONTROL_HIT_RADIUS * MUTE_CONTROL_HIT_RADIUS;
-}
-
 static void touch_event_cb(lv_event_t *event)
 {
     face_t *face = lv_event_get_user_data(event);
     const lv_event_code_t code = lv_event_get_code(event);
     if (code == LV_EVENT_PRESSED) {
-        lv_point_t point;
-        lv_indev_get_point(lv_indev_active(), &point);
-        face->mute_pressed = point_hits_mute_control(face, &point);
-        face->ptt_pressed = !face->mute_pressed;
-        if (face->ptt_pressed) {
-            face_react(face, FACE_REACTION_FOCUS, 0.85f);
-        }
-        notify_input(face, face->mute_pressed
-                     ? FACE_INPUT_MUTE_TOGGLE : FACE_INPUT_PTT_START);
+        face->ptt_pressed = true;
+        face_react(face, FACE_REACTION_FOCUS, 0.85f);
+        notify_input(face, FACE_INPUT_PTT_START);
         return;
     }
     if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
@@ -1092,7 +1058,6 @@ static void touch_event_cb(lv_event_t *event)
             face->ptt_pressed = false;
             notify_input(face, FACE_INPUT_PTT_STOP);
         }
-        face->mute_pressed = false;
     }
 }
 
@@ -1127,11 +1092,11 @@ face_t *face_create(lv_obj_t *parent)
     face->activity = FACE_ACTIVITY_IDLE;
     face->mood = FACE_MOOD_WARM;
     face->mood_intensity = 0.72f;
-    face->output_volume_percent = 20;
     face->pose = neutral_pose();
     face->next_drift_ms = now + FACE_DRIFT_PERIOD_MS;
     face->next_blink_ms = now + 1400;
     face->next_saccade_ms = now + 500;
+    face->next_idle_reaction_ms = now + 6500;
     face->report_started_ms = now;
     render_face(face, now);
     face->timer_period_ms = FACE_IDLE_FRAME_PERIOD_MS;
@@ -1203,25 +1168,5 @@ void face_set_playback_level(face_t *face, float level)
     }
     portENTER_CRITICAL(&face->state_lock);
     face->playback_level = clampf(level, 0.0f, 1.0f);
-    portEXIT_CRITICAL(&face->state_lock);
-}
-
-void face_set_muted(face_t *face, bool muted)
-{
-    if (face == NULL) {
-        return;
-    }
-    portENTER_CRITICAL(&face->state_lock);
-    face->muted = muted;
-    portEXIT_CRITICAL(&face->state_lock);
-}
-
-void face_set_output_volume(face_t *face, uint8_t volume_percent)
-{
-    if (face == NULL || volume_percent < 10 || volume_percent > 100) {
-        return;
-    }
-    portENTER_CRITICAL(&face->state_lock);
-    face->output_volume_percent = volume_percent;
     portEXIT_CRITICAL(&face->state_lock);
 }

@@ -43,7 +43,6 @@ typedef enum {
 typedef enum {
     FACE_INPUT_PTT_START = 0,
     FACE_INPUT_PTT_STOP,
-    FACE_INPUT_MUTE_TOGGLE,
 } face_input_event_t;
 
 typedef struct face face_t;
@@ -67,6 +66,3 @@ void face_react(face_t *face, face_reaction_t reaction, float intensity);
 
 /** Supply the envelope of PCM samples actually entering the codec. */
 void face_set_playback_level(face_t *face, float level);
-
-void face_set_muted(face_t *face, bool muted);
-void face_set_output_volume(face_t *face, uint8_t volume_percent);

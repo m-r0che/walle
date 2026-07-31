@@ -215,10 +215,21 @@ dependencies:
     targets:
     - esp32s3
     version: 2.0.3
+  waveshare/qmi8658:
+    component_hash: b672b61491bd2c38dab2b62ebcd00d49b0947762c0c718608f3820fce28adfd8
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.3.2'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 2.0.0
 direct_dependencies:
 - espressif/esp_websocket_client
 - idf
 - waveshare/esp32_s3_touch_amoled_1_8
-manifest_hash: 47399f1a34e6abaad96eabcd7ebee55093307f15bfd3726b78275ca139799f20
+- waveshare/qmi8658
+manifest_hash: 831d4dcb897ea512ea9c299b0acd52d095e576c8a80aa24094bd4f998c2875e3
 target: esp32s3
 version: 3.0.0
