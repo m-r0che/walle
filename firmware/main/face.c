@@ -14,11 +14,12 @@
 
 #define FACE_WIDTH 448
 #define FACE_HEIGHT 368
-#define FACE_CANVAS_WIDTH 420
-#define FACE_CANVAS_HEIGHT 220
+#define FACE_CANVAS_WIDTH 400
+#define FACE_CANVAS_HEIGHT 240
 #define FACE_CANVAS_X ((FACE_WIDTH - FACE_CANVAS_WIDTH) / 2)
 #define FACE_CANVAS_Y 52
-#define FACE_FRAME_PERIOD_MS 70
+#define FACE_IDLE_FRAME_PERIOD_MS 40
+#define FACE_ACTIVE_FRAME_PERIOD_MS 33
 #define FACE_SLEEPING_FRAME_PERIOD_MS 140
 #define FACE_OFFLINE_FRAME_PERIOD_MS 100
 #define FACE_DRIFT_PERIOD_MS 60000
@@ -162,7 +163,7 @@ static face_pose_t neutral_pose(void)
         .right_brow_lift = 0.05f,
         .left_brow_angle = 0.0f,
         .right_brow_angle = 0.0f,
-        .smile = 0.12f,
+        .smile = 0.18f,
         .mouth_open = 0.0f,
         .mouth_width = 1.0f,
         .tilt = 0.0f,
@@ -267,7 +268,7 @@ static void apply_mood(face_pose_t *pose, face_mood_t mood, float amount)
 {
     switch (mood) {
     case FACE_MOOD_WARM:
-        pose->smile += 0.28f * amount;
+        pose->smile += 0.44f * amount;
         pose->left_brow_lift += 0.10f * amount;
         pose->right_brow_lift += 0.10f * amount;
         pose->pupil_scale += 0.05f * amount;
@@ -587,10 +588,10 @@ static void update_pose(face_t *face, const face_pose_t *target, uint32_t now)
     elapsed = clampf(elapsed, 0.001f, 0.25f);
     face->last_pose_ms = now;
 
-    const float expression_alpha = 1.0f - expf(-elapsed / 0.17f);
-    const float gaze_alpha = 1.0f - expf(-elapsed / 0.11f);
+    const float expression_alpha = 1.0f - expf(-elapsed / 0.085f);
+    const float gaze_alpha = 1.0f - expf(-elapsed / 0.065f);
     const float mouth_tau = target->mouth_open > face->pose.mouth_open
-        ? 0.055f : 0.12f;
+        ? 0.035f : 0.075f;
     const float mouth_alpha = 1.0f - expf(-elapsed / mouth_tau);
 
 #define EASE_FIELD(field) \
@@ -786,7 +787,7 @@ static void draw_eye(face_t *face, float center_x, float center_y,
 {
     eye_curve_t top;
     eye_curve_t bottom;
-    const float radius = 58.0f * scale;
+    const float radius = 49.0f * scale;
     build_eye_curves(&top, &bottom, center_x, center_y, radius,
                      LV_MAX(0.025f, openness));
     transform_points(top.points, EYE_POINT_COUNT, tilt, vertical_offset);
@@ -828,7 +829,7 @@ static void build_brow(brow_curve_t *brow, float center_x, float lift,
         brow->points[index].x = (lv_value_precise_t)(center_x
                                                      + x_normal * 42.0f);
         brow->points[index].y = (lv_value_precise_t)(
-            82.0f - lift * 20.0f + angle * x_normal * 19.0f
+            86.0f - lift * 18.0f + angle * x_normal * 17.0f
             - arch * 5.0f);
     }
 }
@@ -849,9 +850,9 @@ static void build_mouth_curve(mouth_curve_t *mouth, float center_y,
         const float t = (float)index / (MOUTH_POINT_COUNT - 1);
         const float x_normal = t * 2.0f - 1.0f;
         mouth->points[index].x = (lv_value_precise_t)(
-            FACE_WIDTH / 2.0f + x_normal * 61.0f * width);
+            FACE_WIDTH / 2.0f + x_normal * 52.0f * width);
         mouth->points[index].y = (lv_value_precise_t)(
-            center_y + sinf(t * PI_F) * 24.0f * smile);
+            center_y + sinf(t * PI_F) * 32.0f * smile);
     }
 }
 
@@ -859,7 +860,7 @@ static void draw_mouth(face_t *face, const face_pose_t *pose,
                        float vertical_offset)
 {
     mouth_curve_t center;
-    build_mouth_curve(&center, 245.0f, pose->smile, pose->mouth_width);
+    build_mouth_curve(&center, 260.0f, pose->smile, pose->mouth_width);
     if (pose->mouth_open < 0.045f) {
         transform_points(center.points, MOUTH_POINT_COUNT, pose->tilt,
                          vertical_offset);
@@ -1018,8 +1019,16 @@ static uint32_t frame_period_for_activity(face_activity_t activity)
         return FACE_SLEEPING_FRAME_PERIOD_MS;
     case FACE_ACTIVITY_OFFLINE:
         return FACE_OFFLINE_FRAME_PERIOD_MS;
+    case FACE_ACTIVITY_LISTENING:
+    case FACE_ACTIVITY_THINKING:
+    case FACE_ACTIVITY_SPEAKING:
+    case FACE_ACTIVITY_CONFIRM:
+    case FACE_ACTIVITY_SUCCESS:
+    case FACE_ACTIVITY_ERROR:
+        return FACE_ACTIVE_FRAME_PERIOD_MS;
+    case FACE_ACTIVITY_IDLE:
     default:
-        return FACE_FRAME_PERIOD_MS;
+        return FACE_IDLE_FRAME_PERIOD_MS;
     }
 }
 
@@ -1125,7 +1134,7 @@ face_t *face_create(lv_obj_t *parent)
     face->next_saccade_ms = now + 500;
     face->report_started_ms = now;
     render_face(face, now);
-    face->timer_period_ms = FACE_FRAME_PERIOD_MS;
+    face->timer_period_ms = FACE_IDLE_FRAME_PERIOD_MS;
     face->timer = lv_timer_create(animation_timer_cb,
                                   face->timer_period_ms, face);
     return face;

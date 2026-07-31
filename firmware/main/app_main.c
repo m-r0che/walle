@@ -162,10 +162,10 @@ static lv_obj_t *create_control_button(lv_obj_t *parent, const char *text,
                                        app_context_t *context)
 {
     lv_obj_t *button = lv_button_create(parent);
-    lv_obj_set_size(button, width, 48);
-    lv_obj_set_pos(button, x, 302);
-    lv_obj_set_ext_click_area(button, 14);
-    lv_obj_set_style_radius(button, 26, LV_PART_MAIN);
+    lv_obj_set_size(button, width, 30);
+    lv_obj_set_pos(button, x, 326);
+    lv_obj_set_ext_click_area(button, 22);
+    lv_obj_set_style_radius(button, 15, LV_PART_MAIN);
     lv_obj_set_style_bg_color(button, lv_color_hex(0x00151a), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(button, LV_OPA_70, LV_PART_MAIN);
     lv_obj_set_style_border_color(button, lv_color_hex(0x68d9e3),
@@ -188,17 +188,17 @@ static bool start_volume_controls(app_context_t *context)
     }
     lv_obj_t *screen = lv_screen_active();
     context->volume_down_button = create_control_button(
-        screen, "-", 28, 68, handle_volume_button, context);
+        screen, "-", 20, 48, handle_volume_button, context);
     context->volume_up_button = create_control_button(
-        screen, "+", 352, 68, handle_volume_button, context);
+        screen, "+", 380, 48, handle_volume_button, context);
     lv_obj_t *face_demo_button = create_control_button(
-        screen, s_face_demo_states[0].label, 172, 104,
+        screen, s_face_demo_states[0].label, 184, 80,
         handle_face_demo_button, context);
     context->face_demo_label = lv_obj_get_child(face_demo_button, 0);
 
     context->volume_label = lv_label_create(screen);
     lv_obj_set_width(context->volume_label, 96);
-    lv_obj_set_pos(context->volume_label, 176, 280);
+    lv_obj_set_pos(context->volume_label, 176, 306);
     lv_obj_set_style_text_align(context->volume_label, LV_TEXT_ALIGN_CENTER,
                                 LV_PART_MAIN);
     lv_obj_set_style_text_color(context->volume_label,
