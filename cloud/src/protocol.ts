@@ -19,6 +19,24 @@ export type AudioFrame = {
   pcm: Uint8Array;
 };
 
+export type DeviceTelemetryReport = {
+  v: 1;
+  type: "telemetry.report";
+  epoch: number;
+  state: number;
+  captureAccepting: boolean;
+  queueDepth: number;
+  startsQueued: number;
+  startUnready: number;
+  startMutexBusy: number;
+  startAlreadyActive: number;
+  turnsStarted: number;
+  turnsCommitted: number;
+  audioDropped: number;
+  protocolErrors: number;
+  socketRestarts: number;
+};
+
 export type DeviceControlMessage =
   | {
       v: 1;
@@ -40,6 +58,7 @@ export type DeviceControlMessage =
       source: "remote" | "local";
       samples: number;
     }
+  | DeviceTelemetryReport
   | { v: 1; type: "ping"; nonce: string };
 
 function bytesOf(message: ArrayBuffer | ArrayBufferView): Uint8Array {
@@ -168,6 +187,34 @@ export function decodeControlMessage(text: string): DeviceControlMessage {
         throw new Error("playback report is invalid");
       }
       return message as DeviceControlMessage;
+    case "telemetry.report": {
+      const counts = [
+        message.queueDepth,
+        message.startsQueued,
+        message.startUnready,
+        message.startMutexBusy,
+        message.startAlreadyActive,
+        message.turnsStarted,
+        message.turnsCommitted,
+        message.audioDropped,
+        message.protocolErrors,
+        message.socketRestarts,
+      ];
+      if (typeof message.epoch !== "number"
+          || !Number.isInteger(message.epoch) || message.epoch <= 0
+          || message.epoch > 0xffff_ffff
+          || typeof message.state !== "number"
+          || !Number.isInteger(message.state) || message.state < 0
+          || message.state > 7
+          || typeof message.captureAccepting !== "boolean"
+          || counts.some((count) => typeof count !== "number"
+            || !Number.isInteger(count) || count < 0
+            || count > 0xffff_ffff)
+          || (message.queueDepth as number) > 32) {
+        throw new Error("device telemetry is invalid");
+      }
+      return message as DeviceTelemetryReport;
+    }
     case "ping":
       if (typeof message.nonce !== "string" || message.nonce.length > 64) {
         throw new Error("ping nonce is invalid");

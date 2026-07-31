@@ -58,6 +58,10 @@ typedef struct {
     uint32_t stale_socket_events;
     uint32_t connection_epoch;
     uint32_t protocol_errors;
+    uint32_t capture_starts_queued;
+    uint32_t capture_start_unready;
+    uint32_t capture_start_mutex_busy;
+    uint32_t capture_start_already_active;
     uint32_t turns_started;
     uint32_t turns_committed;
     uint32_t turns_cancelled;

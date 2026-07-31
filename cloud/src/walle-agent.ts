@@ -13,6 +13,7 @@ import {
   decodeAudioFrame,
   decodeControlMessage,
   encodeAudioFrame,
+  type DeviceTelemetryReport,
 } from "./protocol";
 
 type AudioProvider = "echo" | "openai";
@@ -35,6 +36,10 @@ export type RelayDebugStatus = {
   providerError: string | null;
   protocolError: string | null;
   outputPaceMs: number;
+  latestTelemetry: (DeviceTelemetryReport & {
+    connectionId: string;
+    receivedAt: number;
+  }) | null;
 };
 
 export type GenerationMetrics = {
@@ -114,6 +119,10 @@ export class WalleAgent extends Agent<WalleEnv> {
   private provider: AudioProvider = "echo";
   private providerError: string | null = null;
   private protocolError: string | null = null;
+  private latestTelemetry: (DeviceTelemetryReport & {
+    connectionId: string;
+    receivedAt: number;
+  }) | null = null;
 
   static options = {
     sendIdentityOnConnect: false,
@@ -253,6 +262,7 @@ export class WalleAgent extends Agent<WalleEnv> {
       providerError: this.providerError,
       protocolError: this.protocolError,
       outputPaceMs: OUTPUT_FRAME_PACE_MS,
+      latestTelemetry: this.latestTelemetry,
     };
   }
 
@@ -558,6 +568,16 @@ export class WalleAgent extends Agent<WalleEnv> {
         }));
         return;
       }
+      case "telemetry.report":
+        if (message.epoch !== state.sessionEpoch) {
+          throw new Error("device telemetry epoch is stale");
+        }
+        this.latestTelemetry = {
+          ...message,
+          connectionId: connection.id,
+          receivedAt: Date.now(),
+        };
+        return;
       case "response.cancel":
         if (state.lastTurnId !== message.turnId) {
           throw new Error("response cancel does not match the last turn");

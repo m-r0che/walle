@@ -48,6 +48,7 @@
 #define PROTOCOL_READY_DEADLINE_MS 15000
 #define HEARTBEAT_INTERVAL_MS 10000
 #define HEARTBEAT_TIMEOUT_MS 12000
+#define TELEMETRY_INTERVAL_MS 10000
 /* Refresh before the documented 60-minute OpenAI Realtime session limit. */
 #define SOCKET_MAX_LIFETIME_MS (55 * 60 * 1000)
 #define STABLE_CONNECTION_MS 30000
@@ -158,6 +159,7 @@ struct network_relay {
     atomic_uint next_output_sequence;
     atomic_bool output_turn_active;
     atomic_bool generated_output_mode;
+    atomic_bool telemetry_dirty;
     uint32_t epoch_counter;
     uint32_t stream_turn_epoch;
     uint32_t stream_turn_token;
@@ -840,6 +842,46 @@ static bool send_control(network_relay_t *relay, const char *message)
     return sent;
 }
 
+static bool send_network_telemetry(network_relay_t *relay)
+{
+    bool capture_accepting;
+    UBaseType_t queue_depth;
+    if (xSemaphoreTake(relay->stream_mutex, pdMS_TO_TICKS(1)) != pdTRUE) {
+        return false;
+    }
+    capture_accepting = relay->capture_accepting;
+    queue_depth = uxQueueMessagesWaiting(relay->stream_queue);
+    xSemaphoreGive(relay->stream_mutex);
+
+    network_relay_snapshot_t snapshot;
+    network_relay_get_snapshot(relay, &snapshot);
+    char message[512];
+    const int length = snprintf(
+        message, sizeof(message),
+        "{\"v\":1,\"type\":\"telemetry.report\","
+        "\"epoch\":%u,\"state\":%u,\"captureAccepting\":%s,"
+        "\"queueDepth\":%u,\"startsQueued\":%u,"
+        "\"startUnready\":%u,\"startMutexBusy\":%u,"
+        "\"startAlreadyActive\":%u,\"turnsStarted\":%u,"
+        "\"turnsCommitted\":%u,\"audioDropped\":%u,"
+        "\"protocolErrors\":%u,\"socketRestarts\":%u}",
+        (unsigned)snapshot.connection_epoch,
+        (unsigned)snapshot.state,
+        capture_accepting ? "true" : "false",
+        (unsigned)queue_depth,
+        (unsigned)snapshot.capture_starts_queued,
+        (unsigned)snapshot.capture_start_unready,
+        (unsigned)snapshot.capture_start_mutex_busy,
+        (unsigned)snapshot.capture_start_already_active,
+        (unsigned)snapshot.turns_started,
+        (unsigned)snapshot.turns_committed,
+        (unsigned)snapshot.audio_frames_dropped,
+        (unsigned)snapshot.protocol_errors,
+        (unsigned)snapshot.socket_restarts);
+    return length > 0 && length < (int)sizeof(message)
+        && send_control(relay, message);
+}
+
 static bool send_audio_frame(void *context, const int16_t *samples,
                              size_t sample_count)
 {
@@ -1089,6 +1131,7 @@ static void service_websocket(network_relay_t *relay)
         int64_t ready_ms = 0;
         int64_t next_ping_ms = 0;
         int64_t pong_deadline_ms = 0;
+        int64_t next_telemetry_ms = 0;
         bool hello_sent = false;
         bool awaiting_pong = false;
         socket_exit_reason_t reason = SOCKET_EXIT_TRANSPORT;
@@ -1141,6 +1184,7 @@ static void service_websocket(network_relay_t *relay)
             if (ready_ms == 0) {
                 ready_ms = now;
                 next_ping_ms = now;
+                next_telemetry_ms = now;
             }
 
             if ((bits & SOCKET_PONG_BIT) != 0) {
@@ -1175,6 +1219,14 @@ static void service_websocket(network_relay_t *relay)
             }
 
             service_stream_queue(relay);
+            if (atomic_exchange(&relay->telemetry_dirty, false)
+                    || now >= next_telemetry_ms) {
+                if (send_network_telemetry(relay)) {
+                    next_telemetry_ms = now + TELEMETRY_INTERVAL_MS;
+                } else {
+                    atomic_store(&relay->telemetry_dirty, true);
+                }
+            }
             if (now - connected_ms >= SOCKET_MAX_LIFETIME_MS) {
                 reason = SOCKET_EXIT_PLANNED_REFRESH;
                 break;
@@ -1276,6 +1328,7 @@ esp_err_t network_relay_create(network_relay_t **out_relay)
     atomic_init(&relay->next_output_sequence, 0);
     atomic_init(&relay->output_turn_active, false);
     atomic_init(&relay->generated_output_mode, false);
+    atomic_init(&relay->telemetry_dirty, true);
     relay->snapshot.state = NETWORK_RELAY_DISABLED;
     relay->snapshot.active_network = -1;
     relay->snapshot.rssi = -128;
@@ -1383,9 +1436,23 @@ bool network_relay_capture(network_relay_t *relay,
                 || sample_count > CAPTURE_CHUNK_SAMPLES)) {
         return false;
     }
-    if ((xEventGroupGetBits(relay->events) & SOCKET_READY_BIT) == 0
-            || xSemaphoreTake(relay->stream_mutex, 0) != pdTRUE) {
-        if (event == NETWORK_RELAY_CAPTURE_AUDIO) {
+    if ((xEventGroupGetBits(relay->events) & SOCKET_READY_BIT) == 0) {
+        if (event == NETWORK_RELAY_CAPTURE_START) {
+            increment_counter(relay,
+                              &relay->snapshot.capture_start_unready);
+            atomic_store(&relay->telemetry_dirty, true);
+        } else if (event == NETWORK_RELAY_CAPTURE_AUDIO) {
+            increment_counter(relay,
+                              &relay->snapshot.audio_frames_dropped);
+        }
+        return false;
+    }
+    if (xSemaphoreTake(relay->stream_mutex, 0) != pdTRUE) {
+        if (event == NETWORK_RELAY_CAPTURE_START) {
+            increment_counter(
+                relay, &relay->snapshot.capture_start_mutex_busy);
+            atomic_store(&relay->telemetry_dirty, true);
+        } else if (event == NETWORK_RELAY_CAPTURE_AUDIO) {
             increment_counter(relay,
                               &relay->snapshot.audio_frames_dropped);
         }
@@ -1396,6 +1463,11 @@ bool network_relay_capture(network_relay_t *relay,
     switch (event) {
     case NETWORK_RELAY_CAPTURE_START:
         allowed = !relay->capture_accepting;
+        if (!allowed) {
+            increment_counter(
+                relay, &relay->snapshot.capture_start_already_active);
+            atomic_store(&relay->telemetry_dirty, true);
+        }
         break;
     case NETWORK_RELAY_CAPTURE_AUDIO:
         allowed = relay->capture_accepting
@@ -1422,6 +1494,9 @@ bool network_relay_capture(network_relay_t *relay,
         && xQueueSend(relay->stream_queue, &item, 0) == pdTRUE;
     if (queued && event == NETWORK_RELAY_CAPTURE_START) {
         relay->capture_accepting = true;
+        increment_counter(relay,
+                          &relay->snapshot.capture_starts_queued);
+        atomic_store(&relay->telemetry_dirty, true);
     } else if (queued && (event == NETWORK_RELAY_CAPTURE_COMMIT
                           || event == NETWORK_RELAY_CAPTURE_CANCEL)) {
         relay->capture_accepting = false;

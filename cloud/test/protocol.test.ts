@@ -104,6 +104,24 @@ describe("control protocol", () => {
 
     expect(decodeControlMessage(JSON.stringify({
       v: 1,
+      type: "telemetry.report",
+      epoch: 7,
+      state: 6,
+      captureAccepting: false,
+      queueDepth: 0,
+      startsQueued: 3,
+      startUnready: 1,
+      startMutexBusy: 0,
+      startAlreadyActive: 0,
+      turnsStarted: 3,
+      turnsCommitted: 3,
+      audioDropped: 0,
+      protocolErrors: 0,
+      socketRestarts: 1,
+    }))).toMatchObject({ type: "telemetry.report", epoch: 7 });
+
+    expect(decodeControlMessage(JSON.stringify({
+      v: 1,
       type: "response.cancel",
       turnId: "turn-1",
     }))).toMatchObject({ type: "response.cancel", turnId: "turn-1" });
