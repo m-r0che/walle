@@ -37,6 +37,7 @@ export type RelayDebugStatus = {
   providerError: string | null;
   protocolError: string | null;
   outputPaceMs: number;
+  playbackMode: "buffered";
   latestTelemetry: (DeviceTelemetryReport & {
     connectionId: string;
     receivedAt: number;
@@ -273,6 +274,7 @@ export class WalleAgent extends Agent<WalleEnv> {
       providerError: this.providerError,
       protocolError: this.protocolError,
       outputPaceMs: OUTPUT_FRAME_PACE_MS,
+      playbackMode: "buffered",
       latestTelemetry: this.latestTelemetry,
       lastGenerationFailure: this.lastGenerationFailure,
     };
