@@ -14,10 +14,10 @@
 
 #define FACE_WIDTH 448
 #define FACE_HEIGHT 368
-#define FACE_CANVAS_WIDTH 400
-#define FACE_CANVAS_HEIGHT 240
+#define FACE_CANVAS_WIDTH 344
+#define FACE_CANVAS_HEIGHT 286
 #define FACE_CANVAS_X ((FACE_WIDTH - FACE_CANVAS_WIDTH) / 2)
-#define FACE_CANVAS_Y 52
+#define FACE_CANVAS_Y 39
 #define FACE_IDLE_FRAME_PERIOD_MS 40
 #define FACE_ACTIVE_FRAME_PERIOD_MS 33
 #define FACE_SLEEPING_FRAME_PERIOD_MS 140
@@ -277,7 +277,7 @@ static void apply_mood(face_pose_t *pose, face_mood_t mood, float amount)
         pose->gaze_x += 0.18f * amount;
         pose->gaze_y -= 0.12f * amount;
         pose->smile += 0.16f * amount;
-        pose->tilt -= 0.025f * amount;
+        pose->tilt -= 0.040f * amount;
         break;
     case FACE_MOOD_DELIGHTED:
         pose->left_eye_open -= 0.22f * amount;
@@ -295,7 +295,7 @@ static void apply_mood(face_pose_t *pose, face_mood_t mood, float amount)
         pose->right_brow_angle -= 0.20f * amount;
         pose->right_brow_lift += 0.18f * amount;
         pose->smile -= 0.28f * amount;
-        pose->tilt += 0.018f * amount;
+        pose->tilt += 0.030f * amount;
         break;
     case FACE_MOOD_CONCERNED:
         pose->left_eye_open -= 0.12f * amount;
@@ -392,7 +392,7 @@ static void apply_reaction(face_pose_t *pose, face_reaction_t reaction,
         pose->left_brow_lift += 0.16f * amount;
         pose->right_brow_lift += 0.16f * amount;
         pose->smile += 0.72f * amount;
-        pose->tilt -= 0.035f * amount;
+        pose->tilt -= 0.055f * amount;
         break;
     case FACE_REACTION_GLANCE_LEFT:
         pose->gaze_x = lerpf(pose->gaze_x, -1.0f, amount);
@@ -408,7 +408,7 @@ static void apply_reaction(face_pose_t *pose, face_reaction_t reaction,
         pose->left_eye_open *= 1.0f - amount;
         pose->right_brow_lift += 0.20f * amount;
         pose->smile += 0.45f * amount;
-        pose->tilt += 0.022f * amount;
+        pose->tilt += 0.038f * amount;
         break;
     default:
         break;
@@ -431,7 +431,7 @@ static void clamp_pose(face_pose_t *pose)
     pose->smile = clampf(pose->smile, -1.0f, 1.0f);
     pose->mouth_open = clampf(pose->mouth_open, 0.0f, 1.0f);
     pose->mouth_width = clampf(pose->mouth_width, 0.70f, 1.18f);
-    pose->tilt = clampf(pose->tilt, -0.06f, 0.06f);
+    pose->tilt = clampf(pose->tilt, -0.09f, 0.09f);
     pose->energy = clampf(pose->energy, 0.05f, 1.0f);
 }
 
@@ -442,7 +442,7 @@ static void update_autonomous_gaze(face_t *face, uint32_t now,
         face->autonomous_gaze_target_x = 0.0f;
         face->autonomous_gaze_target_y = 0.0f;
     } else if (time_reached(now, face->next_saccade_ms)) {
-        const float spread = 0.10f + energy * 0.22f;
+        const float spread = 0.16f + energy * 0.34f;
         face->autonomous_gaze_target_x =
             ((float)((int32_t)random_range(0, 200) - 100) / 100.0f) * spread;
         face->autonomous_gaze_target_y =
@@ -795,14 +795,14 @@ static void draw_eye(face_t *face, float center_x, float center_y,
         return;
     }
     lv_point_precise_t pupil_center = {
-        .x = (lv_value_precise_t)(center_x + gaze_x * 24.0f),
+        .x = (lv_value_precise_t)(center_x + gaze_x * 32.0f),
         .y = (lv_value_precise_t)(center_y
-                                  + gaze_y * 16.0f
+                                  + gaze_y * 22.0f
                                   * clampf(openness, 0.3f, 1.0f)),
     };
     transform_point(&pupil_center, tilt, vertical_offset);
-    const int32_t halo_radius = LV_MAX(5, (int32_t)(11.0f * pupil_scale));
-    const int32_t core_radius = LV_MAX(3, (int32_t)(5.5f * pupil_scale));
+    const int32_t halo_radius = LV_MAX(6, (int32_t)(13.0f * pupil_scale));
+    const int32_t core_radius = LV_MAX(4, (int32_t)(7.0f * pupil_scale));
     draw_disc(face, pupil_center.x, pupil_center.y, halo_radius,
               pack_dimmed_color((raster_color_t){0x00, 0x67, 0x75}, 125));
     draw_disc(face, pupil_center.x, pupil_center.y, core_radius,
@@ -883,10 +883,10 @@ static void draw_realisation_spark(face_t *face, float amount)
     const float scale = smoothstep((amount - 0.52f) / 0.48f);
     const int32_t radius = 5 + (int32_t)(scale * 7.0f);
     const lv_point_precise_t horizontal[] = {
-        {397 - radius, 90}, {397 + radius, 90},
+        {380 - radius, 90}, {380 + radius, 90},
     };
     const lv_point_precise_t vertical[] = {
-        {397, 90 - radius}, {397, 90 + radius},
+        {380, 90 - radius}, {380, 90 + radius},
     };
     draw_glow_curve(face, horizontal, 2, false);
     draw_glow_curve(face, vertical, 2, false);
@@ -906,8 +906,8 @@ static void draw_sleep_z(face_t *face, int32_t x, int32_t y, int32_t size)
 static void draw_sleep_symbols(face_t *face, float seconds)
 {
     const int32_t drift = (int32_t)fmodf(seconds * 7.0f, 28.0f);
-    draw_sleep_z(face, 375, 154 - drift, 13);
-    draw_sleep_z(face, 397, 118 - drift / 2, 9);
+    draw_sleep_z(face, 358, 154 - drift, 13);
+    draw_sleep_z(face, 379, 118 - drift / 2, 9);
 }
 
 static void render_face(face_t *face, uint32_t now)
@@ -943,7 +943,7 @@ static void render_face(face_t *face, uint32_t now)
 
     const float seconds = (float)now / 1000.0f;
     const float breath = sinf(seconds * (2.0f * PI_F / 4.2f))
-        * (0.8f + face->pose.energy * 1.8f);
+        * (1.2f + face->pose.energy * 3.0f);
     draw_brow(face, 132.0f, face->pose.left_brow_lift,
               face->pose.left_brow_angle, face->pose.tilt, breath);
     draw_brow(face, 316.0f, face->pose.right_brow_lift,

@@ -33,6 +33,7 @@ typedef struct {
     lv_obj_t *volume_label;
     lv_obj_t *volume_down_button;
     lv_obj_t *volume_up_button;
+    lv_timer_t *volume_hide_timer;
     uint8_t output_volume;
     nvs_handle_t settings;
     bool settings_open;
@@ -89,6 +90,15 @@ static void update_volume_label(app_context_t *context)
     }
 }
 
+static void hide_volume_label(lv_timer_t *timer)
+{
+    app_context_t *context = lv_timer_get_user_data(timer);
+    if (context->volume_label != NULL) {
+        lv_obj_add_flag(context->volume_label, LV_OBJ_FLAG_HIDDEN);
+    }
+    lv_timer_pause(timer);
+}
+
 static void handle_volume_button(lv_event_t *event)
 {
     if (lv_event_get_code(event) != LV_EVENT_PRESSED) {
@@ -115,6 +125,11 @@ static void handle_volume_button(lv_event_t *event)
     }
     context->output_volume = next_volume;
     update_volume_label(context);
+    lv_obj_clear_flag(context->volume_label, LV_OBJ_FLAG_HIDDEN);
+    if (context->volume_hide_timer != NULL) {
+        lv_timer_reset(context->volume_hide_timer);
+        lv_timer_resume(context->volume_hide_timer);
+    }
     persist_output_volume(context);
     ESP_LOGI(TAG, "Volume selected=%u%%", (unsigned)next_volume);
 }
@@ -125,15 +140,13 @@ static lv_obj_t *create_control_button(lv_obj_t *parent, const char *text,
                                        app_context_t *context)
 {
     lv_obj_t *button = lv_button_create(parent);
+    lv_obj_remove_style_all(button);
     lv_obj_set_size(button, width, 30);
     lv_obj_set_pos(button, x, 326);
     lv_obj_set_ext_click_area(button, 22);
     lv_obj_set_style_radius(button, 15, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(button, lv_color_hex(0x00151a), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(button, LV_OPA_70, LV_PART_MAIN);
-    lv_obj_set_style_border_color(button, lv_color_hex(0x68d9e3),
-                                  LV_PART_MAIN);
-    lv_obj_set_style_border_width(button, 1, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(button, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_border_width(button, 0, LV_PART_MAIN);
     lv_obj_set_style_shadow_width(button, 0, LV_PART_MAIN);
     lv_obj_add_event_cb(button, callback, LV_EVENT_PRESSED, context);
 
@@ -162,6 +175,10 @@ static bool start_volume_controls(app_context_t *context)
     lv_obj_set_style_text_color(context->volume_label,
                                 lv_color_hex(0x68d9e3), LV_PART_MAIN);
     update_volume_label(context);
+    lv_obj_add_flag(context->volume_label, LV_OBJ_FLAG_HIDDEN);
+    context->volume_hide_timer = lv_timer_create(
+        hide_volume_label, 1800, context);
+    lv_timer_pause(context->volume_hide_timer);
     bsp_display_unlock();
     return true;
 }
@@ -383,6 +400,8 @@ void app_main(void)
                 sleeping = false;
                 face_react(context.face, FACE_REACTION_FOCUS, 0.92f);
                 ESP_LOGI(TAG, "Woke from local motion");
+            } else if (snapshot.state == OFFLINE_ECHO_IDLE) {
+                face_react(context.face, FACE_REACTION_FOCUS, 0.52f);
             }
         }
         if (snapshot.state != OFFLINE_ECHO_IDLE) {
