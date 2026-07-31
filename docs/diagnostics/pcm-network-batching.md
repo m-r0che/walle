@@ -54,9 +54,11 @@ This is a conservative model, not proof of hardware behavior. It establishes a f
 
 ## Candidate build
 
-The first off-device build has app SHA-256:
+The initial pre-commit off-device build had app SHA-256 `043a93c6787d5d1d6f68f963a5de9821b29ed7c2f80176ec0d42da57a9f60e2e`. Committing changed the embedded ESP-IDF application version. The exact flashed diagnostic is:
 
-`043a93c6787d5d1d6f68f963a5de9821b29ed7c2f80176ec0d42da57a9f60e2e`
+- Source commit: `6956c2f`
+- App SHA-256: `b926040df0468a289da20fd6576a2e9dd0fdb6c040919a3f36878391926cdb02`
+- Initial remote check: authenticated protocol-ready connection, firmware `6956c2f`, session epoch 1
 
 It must not be promoted unless all of the following pass:
 
