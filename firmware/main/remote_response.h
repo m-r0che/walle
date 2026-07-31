@@ -1,0 +1,62 @@
+#pragma once
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+typedef enum {
+    REMOTE_RESPONSE_EMPTY = 0,
+    REMOTE_RESPONSE_RECEIVING,
+    REMOTE_RESPONSE_READY,
+    REMOTE_RESPONSE_INVALID,
+} remote_response_status_t;
+
+typedef struct {
+    int16_t *storage;
+    size_t capacity;
+    size_t sample_count;
+    size_t read_offset;
+    uint32_t turn_token;
+    remote_response_status_t status;
+} remote_response_t;
+
+/* Initializes an allocation-free response buffer over caller-owned storage. */
+bool remote_response_init(remote_response_t *response, int16_t *storage,
+                          size_t capacity);
+
+/* Starts a new response and discards all state from any older turn. */
+bool remote_response_begin(remote_response_t *response, uint32_t turn_token);
+
+/*
+ * Appends validated, in-order PCM for the active token. Overflow invalidates
+ * the response. Events for stale tokens are rejected without touching the
+ * current turn.
+ */
+bool remote_response_append(remote_response_t *response, uint32_t turn_token,
+                            const int16_t *samples, size_t sample_count);
+
+/*
+ * Makes the response readable only when buffered, relay-reported, and local
+ * capture sample counts are identical and nonzero. A mismatch invalidates it.
+ */
+bool remote_response_complete(remote_response_t *response,
+                              uint32_t turn_token,
+                              size_t relay_reported_samples,
+                              size_t local_capture_samples);
+
+/* Invalidates the matching turn after timeout, queue loss, or protocol error. */
+bool remote_response_invalidate(remote_response_t *response,
+                                uint32_t turn_token);
+
+/* Cancels the matching turn and returns to empty state. */
+bool remote_response_cancel(remote_response_t *response,
+                            uint32_t turn_token);
+
+/* Reads only a complete response; consuming the final sample resets it. */
+size_t remote_response_read(remote_response_t *response, uint32_t turn_token,
+                            int16_t *samples, size_t capacity);
+
+remote_response_status_t remote_response_status(
+    const remote_response_t *response, uint32_t turn_token);
+size_t remote_response_sample_count(const remote_response_t *response,
+                                    uint32_t turn_token);
