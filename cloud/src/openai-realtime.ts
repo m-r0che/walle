@@ -1,3 +1,5 @@
+import { WALLE_PERSONALITY_INSTRUCTIONS } from "./personality";
+
 export const OPENAI_REALTIME_MODEL = "gpt-realtime-2.1";
 export const OPENAI_REALTIME_VOICE = "marin";
 export const MAX_OUTPUT_SAMPLES = 24_000 * 300;
@@ -152,14 +154,7 @@ export class OpenAIRealtimeSession {
         type: "realtime",
         model: OPENAI_REALTIME_MODEL,
         output_modalities: ["audio"],
-        instructions: [
-          "You are Walle, a tiny warm-hearted home robot.",
-          "Be curious, gentle, playful, and truthful.",
-          "Keep ordinary replies concise, but use enough detail to answer naturally.",
-          "Longer answers are allowed when they are genuinely useful.",
-          "Never claim a tool action succeeded unless a tool result confirms it.",
-          "Do not use markdown, lists, stage directions, or sound-effect spelling.",
-        ].join(" "),
+        instructions: WALLE_PERSONALITY_INSTRUCTIONS,
         audio: {
           input: {
             format: { type: "audio/pcm", rate: SAMPLE_RATE },

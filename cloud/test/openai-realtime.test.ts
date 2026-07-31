@@ -96,6 +96,10 @@ describe("OpenAI Realtime session", () => {
     const audio = session.audio as Record<string, Record<string, unknown>>;
     expect(session.model).toBe("gpt-realtime-2.1");
     expect(session.output_modalities).toEqual(["audio"]);
+    expect(session.instructions).toContain("Your name is Walle");
+    expect(session.instructions).toContain("roughly four to twelve words");
+    expect(session.instructions).toContain("explicitly asks for one");
+    expect(session.instructions).toContain("confirmed result");
     expect(audio.input.turn_detection).toBeNull();
     expect(audio.input.format).toEqual({ type: "audio/pcm", rate: 24_000 });
     expect(audio.output.format).toEqual({
