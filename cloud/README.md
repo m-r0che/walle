@@ -1,6 +1,6 @@
 # Walle Cloud relay
 
-Cloudflare Agents SDK relay for one Walle installation. The current provider is an authenticated PCM echo transport with validated complete-turn device playback and local fallback. OpenAI and tools are the next provider phase.
+Cloudflare Agents SDK relay for one Walle installation. The current provider is OpenAI `gpt-realtime-2.1` speech-to-speech with authenticated bounded PCM transport, rolling buffered device playback, exact sample validation, local fallback, versioned personality/voice direction, and turn-scoped semantic affect.
 
 Deployed prototype: `wss://walle-relay.matt-ce8.workers.dev/v1/device`
 
@@ -15,7 +15,7 @@ Health check: `https://walle-relay.matt-ce8.workers.dev/health`
 - Agent identity/state/MCP protocol messages are disabled for device connections.
 - The authorization header is removed before forwarding to the Agent.
 - Audio frames are bounded to 40 ms of 24 kHz mono PCM16 and are never stored in SQLite. The last 100 aggregate turn records retain only frame/sample counts and timestamps.
-- Authenticated `GET /v1/debug/last-turn` exposes bounded connection state plus latest aggregate turn/playback-source metrics for bring-up; it never returns PCM or credentials.
+- Authenticated `GET /v1/debug/last-turn` exposes bounded connection state plus latest aggregate turn/playback-source, latency, personality, voice-profile, and affect metrics for bring-up; it never returns PCM, transcripts, or credentials.
 
 ## Local development
 

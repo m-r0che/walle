@@ -13,7 +13,10 @@ import {
 import {
   OpenAIRealtimeSession,
 } from "./openai-realtime";
-import { WALLE_PERSONALITY_VERSION } from "./personality";
+import {
+  WALLE_PERSONALITY_VERSION,
+  WALLE_VOICE_PROFILE_VERSION,
+} from "./personality";
 import {
   AudioFrameKind,
   decodeAudioFrame,
@@ -50,6 +53,7 @@ export type RelayDebugStatus = {
   steadyOutputPaceMs: number;
   playbackMode: "buffered";
   personalityVersion: string;
+  voiceProfileVersion: string;
   affectVersion: string;
   latestTelemetry: (DeviceTelemetryReport & {
     connectionId: string;
@@ -312,6 +316,7 @@ export class WalleAgent extends Agent<WalleEnv> {
       steadyOutputPaceMs: OUTPUT_STEADY_PACE_MS,
       playbackMode: "buffered",
       personalityVersion: WALLE_PERSONALITY_VERSION,
+      voiceProfileVersion: WALLE_VOICE_PROFILE_VERSION,
       affectVersion: FACE_AFFECT_VERSION,
       latestTelemetry: this.latestTelemetry,
       lastGenerationFailure: this.lastGenerationFailure,

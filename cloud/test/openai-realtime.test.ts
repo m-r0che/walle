@@ -98,15 +98,18 @@ describe("OpenAI Realtime session", () => {
     expect(session.output_modalities).toEqual(["audio"]);
     expect(session.instructions).toContain("Your name is Walle");
     expect(session.instructions).toContain("roughly four to twelve words");
-    expect(session.instructions).toContain("explicitly asks for one");
+    expect(session.instructions).toContain("explicitly requests one");
     expect(session.instructions).toContain("confirmed result");
+    expect(session.instructions).toContain("light, modern British accent");
+    expect(session.instructions).toContain("slightly synthetic");
+    expect(session.instructions).toContain("rather than a generic virtual assistant");
     expect(audio.input.turn_detection).toBeNull();
     expect(audio.input.format).toEqual({ type: "audio/pcm", rate: 24_000 });
     expect(audio.output.format).toEqual({
       type: "audio/pcm",
       rate: 24_000,
     });
-    expect(audio.output.voice).toBe("marin");
+    expect(audio.output.voice).toBe("shimmer");
   });
 
   it("sends manual input and returns bounded PCM chunks", async () => {
