@@ -400,8 +400,6 @@ void app_main(void)
                 sleeping = false;
                 face_react(context.face, FACE_REACTION_FOCUS, 0.92f);
                 ESP_LOGI(TAG, "Woke from local motion");
-            } else if (snapshot.state == OFFLINE_ECHO_IDLE) {
-                face_react(context.face, FACE_REACTION_FOCUS, 0.52f);
             }
         }
         if (snapshot.state != OFFLINE_ECHO_IDLE) {

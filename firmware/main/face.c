@@ -18,8 +18,11 @@
 #define FACE_CANVAS_HEIGHT 286
 #define FACE_CANVAS_X ((FACE_WIDTH - FACE_CANVAS_WIDTH) / 2)
 #define FACE_CANVAS_Y 39
-#define FACE_IDLE_FRAME_PERIOD_MS 40
-#define FACE_ACTIVE_FRAME_PERIOD_MS 33
+// A full face is two panel submissions at the proven 35 ms minimum interval.
+// Requesting animation faster than the resulting 70 ms visible cadence only
+// coalesces frames unevenly and makes short eye motion appear jittery.
+#define FACE_IDLE_FRAME_PERIOD_MS 72
+#define FACE_ACTIVE_FRAME_PERIOD_MS 72
 #define FACE_SLEEPING_FRAME_PERIOD_MS 140
 #define FACE_OFFLINE_FRAME_PERIOD_MS 100
 #define FACE_DRIFT_PERIOD_MS 60000
@@ -475,23 +478,34 @@ static void blink_openness(face_t *face, uint32_t now, float energy,
     }
 
     const uint32_t elapsed = now - face->blink_started_ms;
-    const uint32_t right_delay = 24;
+    const uint32_t right_delay = 10;
     const uint32_t left_elapsed = elapsed;
     const uint32_t right_elapsed = elapsed > right_delay
         ? elapsed - right_delay : 0;
+    const uint32_t close_ms = 120;
+    const uint32_t hold_until_ms = 150;
+    const uint32_t open_until_ms = 360;
 
-    if (left_elapsed < 85) {
-        *left = 1.0f - smoothstep((float)left_elapsed / 85.0f);
-    } else if (left_elapsed < 245) {
-        *left = smoothstep((float)(left_elapsed - 85) / 160.0f);
+    if (left_elapsed < close_ms) {
+        *left = 1.0f - smoothstep((float)left_elapsed / close_ms);
+    } else if (left_elapsed < hold_until_ms) {
+        *left = 0.0f;
+    } else if (left_elapsed < open_until_ms) {
+        *left = smoothstep((float)(left_elapsed - hold_until_ms)
+                           / (open_until_ms - hold_until_ms));
     }
-    if (elapsed > right_delay && right_elapsed < 85) {
-        *right = 1.0f - smoothstep((float)right_elapsed / 85.0f);
-    } else if (elapsed > right_delay && right_elapsed < 245) {
-        *right = smoothstep((float)(right_elapsed - 85) / 160.0f);
+    if (elapsed > right_delay && right_elapsed < close_ms) {
+        *right = 1.0f - smoothstep((float)right_elapsed / close_ms);
+    } else if (elapsed > right_delay
+               && right_elapsed < hold_until_ms) {
+        *right = 0.0f;
+    } else if (elapsed > right_delay
+               && right_elapsed < open_until_ms) {
+        *right = smoothstep((float)(right_elapsed - hold_until_ms)
+                            / (open_until_ms - hold_until_ms));
     }
 
-    if (elapsed >= 285) {
+    if (elapsed >= open_until_ms + right_delay + 20) {
         face->blink_started_ms = 0;
         const uint32_t minimum = (uint32_t)lerpf(5200.0f, 2800.0f, energy);
         const uint32_t maximum = (uint32_t)lerpf(7600.0f, 4800.0f, energy);
@@ -603,7 +617,7 @@ static face_pose_t compose_target(face_t *face, uint32_t now,
             ? 0.0f : clampf(kinetic_x, -1.0f, 1.0f);
         const float responsive_y = fabsf(kinetic_y) < 0.10f
             ? 0.0f : clampf(kinetic_y, -1.0f, 1.0f);
-        const float alertness = clampf(kinetic_score - 0.35f, 0.0f, 1.0f);
+        const float alertness = clampf(kinetic_score - 0.90f, 0.0f, 1.0f);
         target.gaze_x += responsive_x * 0.48f;
         target.gaze_y += responsive_y * 0.40f;
         target.tilt += responsive_x * 0.035f;
@@ -971,8 +985,8 @@ static void render_face(face_t *face, uint32_t now)
            * sizeof(*face->canvas_buffer));
 
     const float seconds = (float)now / 1000.0f;
-    const float breath = sinf(seconds * (2.0f * PI_F / 4.2f))
-        * (1.2f + face->pose.energy * 3.0f);
+    const float breath = sinf(seconds * (2.0f * PI_F / 6.8f))
+        * (0.9f + face->pose.energy * 2.0f);
     draw_brow(face, 132.0f, face->pose.left_brow_lift,
               face->pose.left_brow_angle, face->pose.tilt, breath);
     draw_brow(face, 316.0f, face->pose.right_brow_lift,
