@@ -78,6 +78,9 @@ struct face {
     face_mood_t mood;
     float mood_intensity;
     float playback_level;
+    float kinetic_x;
+    float kinetic_y;
+    float kinetic_score;
     face_input_callback_t input_callback;
     void *input_context;
     bool ptt_pressed;
@@ -442,12 +445,15 @@ static void update_autonomous_gaze(face_t *face, uint32_t now,
         face->autonomous_gaze_target_x = 0.0f;
         face->autonomous_gaze_target_y = 0.0f;
     } else if (time_reached(now, face->next_saccade_ms)) {
-        const float spread = 0.16f + energy * 0.34f;
+        const bool thinking = activity == FACE_ACTIVITY_THINKING;
+        const float spread = thinking
+            ? 0.38f : 0.16f + energy * 0.34f;
         face->autonomous_gaze_target_x =
             ((float)((int32_t)random_range(0, 200) - 100) / 100.0f) * spread;
         face->autonomous_gaze_target_y =
             ((float)((int32_t)random_range(0, 160) - 80) / 100.0f) * spread;
-        face->next_saccade_ms = now + random_range(650, 2600);
+        face->next_saccade_ms = now + (thinking
+            ? random_range(420, 1050) : random_range(650, 2600));
     }
 
     face->autonomous_gaze_x +=
@@ -498,7 +504,8 @@ static void blink_openness(face_t *face, uint32_t now, float energy,
 static face_pose_t compose_target(face_t *face, uint32_t now,
                                   face_activity_t activity,
                                   face_mood_t mood, float mood_intensity,
-                                  float playback_level,
+                                  float playback_level, float kinetic_x,
+                                  float kinetic_y, float kinetic_score,
                                   face_reaction_t requested_reaction,
                                   float requested_reaction_intensity,
                                   uint32_t reaction_generation,
@@ -528,7 +535,9 @@ static face_pose_t compose_target(face_t *face, uint32_t now,
     apply_mood(&target, mood, mood_weight);
 
     update_autonomous_gaze(face, now, activity, target.energy);
-    if (activity == FACE_ACTIVITY_IDLE || activity == FACE_ACTIVITY_SPEAKING) {
+    if (activity == FACE_ACTIVITY_IDLE
+            || activity == FACE_ACTIVITY_THINKING
+            || activity == FACE_ACTIVITY_SPEAKING) {
         target.gaze_x += face->autonomous_gaze_x;
         target.gaze_y += face->autonomous_gaze_y;
     }
@@ -587,6 +596,19 @@ static face_pose_t compose_target(face_t *face, uint32_t now,
         const float eased_level = smoothstep(playback_level);
         target.mouth_open = 0.06f + eased_level * 0.94f;
         target.mouth_width = 0.86f + eased_level * 0.22f;
+    }
+
+    if (activity != FACE_ACTIVITY_SLEEPING) {
+        const float responsive_x = fabsf(kinetic_x) < 0.10f
+            ? 0.0f : clampf(kinetic_x, -1.0f, 1.0f);
+        const float responsive_y = fabsf(kinetic_y) < 0.10f
+            ? 0.0f : clampf(kinetic_y, -1.0f, 1.0f);
+        const float alertness = clampf(kinetic_score - 0.35f, 0.0f, 1.0f);
+        target.gaze_x += responsive_x * 0.48f;
+        target.gaze_y += responsive_y * 0.40f;
+        target.tilt += responsive_x * 0.035f;
+        target.left_eye_open += alertness * 0.05f;
+        target.right_eye_open += alertness * 0.05f;
     }
 
     clamp_pose(&target);
@@ -917,6 +939,9 @@ static void render_face(face_t *face, uint32_t now)
     face_mood_t mood;
     float mood_intensity;
     float playback_level;
+    float kinetic_x;
+    float kinetic_y;
+    float kinetic_score;
     face_reaction_t requested_reaction;
     float requested_reaction_intensity;
     uint32_t reaction_generation;
@@ -925,6 +950,9 @@ static void render_face(face_t *face, uint32_t now)
     mood = face->mood;
     mood_intensity = face->mood_intensity;
     playback_level = face->playback_level;
+    kinetic_x = face->kinetic_x;
+    kinetic_y = face->kinetic_y;
+    kinetic_score = face->kinetic_score;
     requested_reaction = face->requested_reaction;
     requested_reaction_intensity = face->requested_reaction_intensity;
     reaction_generation = face->reaction_generation;
@@ -933,6 +961,7 @@ static void render_face(face_t *face, uint32_t now)
     float reaction_amount = 0.0f;
     const face_pose_t target = compose_target(
         face, now, activity, mood, mood_intensity, playback_level,
+        kinetic_x, kinetic_y, kinetic_score,
         requested_reaction, requested_reaction_intensity,
         reaction_generation, &reaction_amount);
     update_pose(face, &target, now);
@@ -1158,6 +1187,18 @@ void face_react(face_t *face, face_reaction_t reaction, float intensity)
     face->requested_reaction = reaction;
     face->requested_reaction_intensity = clampf(intensity, 0.0f, 1.0f);
     face->reaction_generation++;
+    portEXIT_CRITICAL(&face->state_lock);
+}
+
+void face_set_kinetic_motion(face_t *face, float x, float y, float score)
+{
+    if (face == NULL) {
+        return;
+    }
+    portENTER_CRITICAL(&face->state_lock);
+    face->kinetic_x = clampf(x, -1.5f, 1.5f);
+    face->kinetic_y = clampf(y, -1.5f, 1.5f);
+    face->kinetic_score = clampf(score, 0.0f, 3.0f);
     portEXIT_CRITICAL(&face->state_lock);
 }
 

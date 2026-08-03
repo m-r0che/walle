@@ -414,6 +414,10 @@ void app_main(void)
             ESP_LOGI(TAG, "Sleeping after local stillness");
         }
 
+        face_set_kinetic_motion(context.face,
+                                motion_snapshot.kinetic_x,
+                                motion_snapshot.kinetic_y,
+                                motion_snapshot.motion_score);
         face_set_activity(context.face, sleeping
                           ? FACE_ACTIVITY_SLEEPING
                           : activity_for_audio(snapshot.state));
@@ -449,7 +453,7 @@ void app_main(void)
             display_port_snapshot_t display_snapshot;
             display_port_get_snapshot(&display_snapshot);
             ESP_LOGI(TAG,
-                     "Display submitted=%u completed=%u submit_errors=%u overlaps=%u paced=%u wait_ms=%u motion=%d/%u/%.2f/%u sleeping=%d",
+                     "Display submitted=%u completed=%u submit_errors=%u overlaps=%u paced=%u wait_ms=%u motion=%d/%u/%.2f/%.2f,%.2f/%u sleeping=%d",
                      (unsigned)display_snapshot.submitted,
                      (unsigned)display_snapshot.completed,
                      (unsigned)display_snapshot.submit_errors,
@@ -459,6 +463,8 @@ void app_main(void)
                      motion_snapshot.ready,
                      (unsigned)motion_snapshot.motion_events,
                      motion_snapshot.motion_score,
+                     motion_snapshot.kinetic_x,
+                     motion_snapshot.kinetic_y,
                      (unsigned)motion_snapshot.read_errors,
                      sleeping);
             if (context.network != NULL) {

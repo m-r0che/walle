@@ -30,6 +30,7 @@
 #define LINEAR_MOTION_THRESHOLD_MPS2 0.70f
 #define ANGULAR_MOTION_THRESHOLD_DPS 12.0f
 #define MOTION_EVENT_REFRACTORY_MS 350
+#define KINETIC_RESPONSE_LIMIT 1.5f
 
 static const char *TAG = "motion_sensor";
 
@@ -165,6 +166,16 @@ static void process_sample(motion_sensor_t *sensor,
     const float angular_score = gyro_magnitude
         / ANGULAR_MOTION_THRESHOLD_DPS;
     const float motion_score = fmaxf(linear_score, angular_score);
+    // The panel is software-rotated 90 degrees from the board's native axes:
+    // native +Y becomes landscape +X and native +X becomes landscape -Y.
+    // Use only the high-pass acceleration so a new resting angle naturally
+    // settles rather than pinning the character's gaze indefinitely.
+    const float kinetic_x = fmaxf(-KINETIC_RESPONSE_LIMIT,
+        fminf(KINETIC_RESPONSE_LIMIT,
+              linear_y / LINEAR_MOTION_THRESHOLD_MPS2));
+    const float kinetic_y = fmaxf(-KINETIC_RESPONSE_LIMIT,
+        fminf(KINETIC_RESPONSE_LIMIT,
+              -linear_x / LINEAR_MOTION_THRESHOLD_MPS2));
     const uint32_t now = monotonic_ms();
     const bool event = motion_score >= 1.0f
         && now - sensor->last_motion_event_ms
@@ -176,6 +187,8 @@ static void process_sample(motion_sensor_t *sensor,
     portENTER_CRITICAL(&sensor->lock);
     sensor->snapshot.ready = true;
     sensor->snapshot.motion_score = motion_score;
+    sensor->snapshot.kinetic_x = kinetic_x;
+    sensor->snapshot.kinetic_y = kinetic_y;
     sensor->snapshot.accel_x = data->accelX;
     sensor->snapshot.accel_y = data->accelY;
     sensor->snapshot.accel_z = data->accelZ;

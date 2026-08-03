@@ -64,5 +64,11 @@ face_mood_t face_get_mood(face_t *face);
 /** Start a bounded local reaction which eases back into the underlying face. */
 void face_react(face_t *face, face_reaction_t reaction, float intensity);
 
+/**
+ * Supply a short-lived, high-pass physical movement vector in landscape axes.
+ * Values are clamped locally and never alter truthful conversational activity.
+ */
+void face_set_kinetic_motion(face_t *face, float x, float y, float score);
+
 /** Supply the envelope of PCM samples actually entering the codec. */
 void face_set_playback_level(face_t *face, float level);
