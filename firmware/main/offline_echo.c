@@ -54,6 +54,7 @@ typedef struct {
     command_type_t type;
     bool muted;
     uint8_t volume_percent;
+    int64_t issued_us;
 } command_t;
 
 struct offline_echo {
@@ -83,6 +84,7 @@ struct offline_echo {
     bool remote_streaming_allowed;
     uint32_t turn_counter;
     uint32_t active_turn_token;
+    int64_t release_us;
     int64_t prepare_until_us;
     int64_t remote_deadline_us;
     int64_t remote_absolute_deadline_us;
@@ -446,12 +448,17 @@ static void begin_recording(offline_echo_t *echo)
     echo->active_turn_token = echo->turn_counter;
     echo->remote_attempted = false;
     echo->remote_streaming_allowed = false;
+    echo->release_us = 0;
     echo->remote_deadline_us = 0;
     echo->remote_absolute_deadline_us = 0;
     echo->error_until_us = 0;
     reset_audio_rings(echo);
     set_recorded_samples(echo, 0);
     set_recording_committed(echo, false);
+    portENTER_CRITICAL(&echo->snapshot_lock);
+    echo->snapshot.first_codec_write_latency_valid = false;
+    echo->snapshot.release_to_first_codec_write_ms = 0;
+    portEXIT_CRITICAL(&echo->snapshot_lock);
     echo->stream_turn_accepted = false;
     update_state(echo, OFFLINE_ECHO_RECORDING, ESP_OK);
     ESP_LOGI(TAG, "Recording pending commit");
@@ -671,12 +678,26 @@ static void play_recording(offline_echo_t *echo, bool use_remote,
         smoothed_level += (level - smoothed_level) * smoothing;
         set_playback_level(echo, smoothed_level);
 
+        const int64_t write_started_us = esp_timer_get_time();
         const int result = esp_codec_dev_write(
             echo->codec, samples, count * sizeof(*samples));
         if (result != ESP_CODEC_DEV_OK) {
             add_write_error(echo, result);
             write_failed = true;
             break;
+        }
+        if (played_samples == 0 && echo->release_us > 0) {
+            const int64_t latency_us = write_started_us - echo->release_us;
+            const uint32_t latency_ms = latency_us <= 0 ? 0
+                : (uint32_t)((latency_us + 500) / 1000);
+            portENTER_CRITICAL(&echo->snapshot_lock);
+            echo->snapshot.first_codec_write_latency_valid = true;
+            echo->snapshot.release_to_first_codec_write_ms = latency_ms;
+            portEXIT_CRITICAL(&echo->snapshot_lock);
+            ESP_LOGI(TAG,
+                     "First codec write source=%s release_latency=%ums",
+                     use_remote ? "remote" : "local",
+                     (unsigned)latency_ms);
         }
         played_samples += count;
     }
@@ -757,6 +778,8 @@ static void apply_command(offline_echo_t *echo, const command_t *command)
             } else {
                 finish_stream_turn(echo, OFFLINE_ECHO_STREAM_COMMIT);
                 const int64_t stopped_us = esp_timer_get_time();
+                echo->release_us = command->issued_us > 0
+                    ? command->issued_us : stopped_us;
                 echo->prepare_until_us = stopped_us
                     + PREPARE_DELAY_MS * 1000LL;
                 echo->remote_deadline_us = stopped_us
@@ -912,6 +935,7 @@ static void audio_task(void *argument)
         if (pcm_ring_free(&echo->capture_ring) == 0) {
             finish_stream_turn(echo, OFFLINE_ECHO_STREAM_COMMIT);
             const int64_t stopped_us = esp_timer_get_time();
+            echo->release_us = stopped_us;
             echo->prepare_until_us = stopped_us
                 + PREPARE_DELAY_MS * 1000LL;
             echo->remote_deadline_us = stopped_us
@@ -1097,7 +1121,13 @@ esp_err_t offline_echo_record_start(offline_echo_t *echo)
 
 esp_err_t offline_echo_record_stop(offline_echo_t *echo)
 {
-    return send_command(echo, (command_t){.type = COMMAND_RECORD_STOP}, false);
+    return send_command(
+        echo,
+        (command_t){
+            .type = COMMAND_RECORD_STOP,
+            .issued_us = esp_timer_get_time(),
+        },
+        false);
 }
 
 esp_err_t offline_echo_set_muted(offline_echo_t *echo, bool muted)

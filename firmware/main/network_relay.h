@@ -118,7 +118,8 @@ bool network_relay_cancel_response(network_relay_t *relay,
 bool network_relay_report_playback(network_relay_t *relay,
                                    uint32_t turn_token,
                                    bool remote,
-                                   size_t sample_count);
+                                   size_t sample_count,
+                                   uint32_t first_codec_write_ms);
 
 /** Read a coherent, non-blocking connectivity snapshot. */
 void network_relay_get_snapshot(network_relay_t *relay,

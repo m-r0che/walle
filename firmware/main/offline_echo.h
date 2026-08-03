@@ -61,6 +61,8 @@ typedef struct {
     uint32_t remote_playbacks;
     uint32_t local_fallbacks;
     uint32_t remote_timeouts;
+    bool first_codec_write_latency_valid;
+    uint32_t release_to_first_codec_write_ms;
     esp_err_t last_error;
 } offline_echo_snapshot_t;
 

@@ -66,6 +66,7 @@ export type PlaybackMetrics = {
   turnId: string;
   source: "remote" | "local";
   samples: number;
+  firstCodecWriteMs: number;
   createdAt: number;
 };
 
@@ -182,9 +183,20 @@ export class WalleAgent extends Agent<WalleEnv> {
         turn_id TEXT NOT NULL,
         source TEXT NOT NULL,
         samples INTEGER NOT NULL,
+        first_codec_write_ms INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL
       )
     `;
+    const playbackColumns = this.sql<{ name: string }>`
+      PRAGMA table_info(playback_metrics)
+    `;
+    if (!playbackColumns.some((column) =>
+      column.name === "first_codec_write_ms")) {
+      this.sql`
+        ALTER TABLE playback_metrics
+        ADD COLUMN first_codec_write_ms INTEGER NOT NULL DEFAULT 0
+      `;
+    }
   }
 
   getLastPlaybackMetrics(): PlaybackMetrics | null {
@@ -192,9 +204,10 @@ export class WalleAgent extends Agent<WalleEnv> {
       turn_id: string;
       source: "remote" | "local";
       samples: number;
+      first_codec_write_ms: number;
       created_at: number;
     }>`
-      SELECT turn_id, source, samples, created_at
+      SELECT turn_id, source, samples, first_codec_write_ms, created_at
       FROM playback_metrics
       ORDER BY id DESC
       LIMIT 1
@@ -204,6 +217,7 @@ export class WalleAgent extends Agent<WalleEnv> {
       turnId: row.turn_id,
       source: row.source,
       samples: row.samples,
+      firstCodecWriteMs: row.first_codec_write_ms,
       createdAt: row.created_at,
     };
   }
@@ -577,10 +591,13 @@ export class WalleAgent extends Agent<WalleEnv> {
           throw new Error("playback report does not match the last turn");
         }
         const reportedAt = Date.now();
+        const firstCodecWriteMs = message.firstCodecWriteMs ?? 0;
         this.sql`
-          INSERT INTO playback_metrics (turn_id, source, samples, created_at)
-          VALUES (${message.turnId}, ${message.source},
-                  ${message.samples}, ${reportedAt})
+          INSERT INTO playback_metrics (
+            turn_id, source, samples, first_codec_write_ms, created_at
+          )
+          VALUES (${message.turnId}, ${message.source}, ${message.samples},
+                  ${firstCodecWriteMs}, ${reportedAt})
         `;
         this.sql`
           DELETE FROM playback_metrics
@@ -595,6 +612,7 @@ export class WalleAgent extends Agent<WalleEnv> {
           turnId: message.turnId,
           source: message.source,
           samples: message.samples,
+          firstCodecWriteMs,
         }));
         return;
       }

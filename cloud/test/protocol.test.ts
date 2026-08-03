@@ -140,7 +140,20 @@ describe("control protocol", () => {
       turnId: "turn-1",
       source: "remote",
       samples: 48_000,
-    }))).toMatchObject({ type: "playback.report", source: "remote" });
+      firstCodecWriteMs: 1_284,
+    }))).toMatchObject({
+      type: "playback.report",
+      source: "remote",
+      firstCodecWriteMs: 1_284,
+    });
+
+    expect(decodeControlMessage(JSON.stringify({
+      v: 1,
+      type: "playback.report",
+      turnId: "legacy-turn",
+      source: "local",
+      samples: 24_000,
+    }))).toMatchObject({ type: "playback.report", source: "local" });
 
     expect(() => decodeControlMessage(JSON.stringify({
       v: 1,
@@ -148,6 +161,16 @@ describe("control protocol", () => {
       turnId: "turn-1",
       source: "network",
       samples: 48_000,
+      firstCodecWriteMs: 1_284,
+    }))).toThrow(/playback report/);
+
+    expect(() => decodeControlMessage(JSON.stringify({
+      v: 1,
+      type: "playback.report",
+      turnId: "turn-1",
+      source: "remote",
+      samples: 48_000,
+      firstCodecWriteMs: 330_001,
     }))).toThrow(/playback report/);
   });
 });

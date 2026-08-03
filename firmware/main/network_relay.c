@@ -63,6 +63,7 @@
 #define NETWORK_FRAME_SAMPLES 960
 #define MAX_INPUT_TURN_SAMPLES 720000
 #define MAX_OUTPUT_TURN_SAMPLES 7200000
+#define MAX_PLAYBACK_START_LATENCY_MS 330000
 #define STREAM_QUEUE_LENGTH 640
 #define STREAM_CONTROL_RESERVE 2
 #define EXPECTED_ECHO_SLOTS 64
@@ -115,6 +116,7 @@ typedef struct {
     uint32_t epoch;
     uint32_t turn_token;
     uint32_t value_count;
+    uint32_t first_codec_write_ms;
     int16_t samples[CAPTURE_CHUNK_SAMPLES];
 } stream_item_t;
 
@@ -1073,14 +1075,15 @@ static void service_stream_queue(network_relay_t *relay)
                         &relay->completed_output_token)) {
                 const bool remote =
                     item.event == STREAM_EVENT_REMOTE_PLAYED;
-                char report[192];
+                char report[224];
                 snprintf(
                     report, sizeof(report),
                     "{\"v\":1,\"type\":\"playback.report\","
                     "\"turnId\":\"%s\",\"source\":\"%s\","
-                    "\"samples\":%u}",
+                    "\"samples\":%u,\"firstCodecWriteMs\":%u}",
                     relay->active_turn_id, remote ? "remote" : "local",
-                    (unsigned)item.value_count);
+                    (unsigned)item.value_count,
+                    (unsigned)item.first_codec_write_ms);
                 if (send_control(relay, report)) {
                     increment_counter(
                         relay,
@@ -1603,11 +1606,13 @@ bool network_relay_cancel_response(network_relay_t *relay,
 bool network_relay_report_playback(network_relay_t *relay,
                                    uint32_t turn_token,
                                    bool remote,
-                                   size_t sample_count)
+                                   size_t sample_count,
+                                   uint32_t first_codec_write_ms)
 {
     if (relay == NULL || relay->stream_queue == NULL || turn_token == 0
             || sample_count == 0
             || sample_count > MAX_OUTPUT_TURN_SAMPLES
+            || first_codec_write_ms > MAX_PLAYBACK_START_LATENCY_MS
             || (xEventGroupGetBits(relay->events) & SOCKET_READY_BIT) == 0
             || xSemaphoreTake(relay->stream_mutex, 0) != pdTRUE) {
         return false;
@@ -1619,6 +1624,7 @@ bool network_relay_report_playback(network_relay_t *relay,
         .epoch = epoch,
         .turn_token = turn_token,
         .value_count = (uint32_t)sample_count,
+        .first_codec_write_ms = first_codec_write_ms,
     };
     const bool queued = epoch != 0
         && xQueueSend(relay->stream_queue, &item, 0) == pdTRUE;

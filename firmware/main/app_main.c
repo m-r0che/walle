@@ -232,11 +232,17 @@ static bool handle_committed_audio_stream(
         relay_event = NETWORK_RELAY_CAPTURE_CANCEL;
         break;
     case OFFLINE_ECHO_STREAM_REMOTE_PLAYED:
+    case OFFLINE_ECHO_STREAM_LOCAL_FALLBACK: {
+        offline_echo_snapshot_t snapshot;
+        offline_echo_get_snapshot(context->echo, &snapshot);
+        if (!snapshot.first_codec_write_latency_valid) {
+            return false;
+        }
         return network_relay_report_playback(
-            context->network, turn_token, true, sample_count);
-    case OFFLINE_ECHO_STREAM_LOCAL_FALLBACK:
-        return network_relay_report_playback(
-            context->network, turn_token, false, sample_count);
+            context->network, turn_token,
+            event == OFFLINE_ECHO_STREAM_REMOTE_PLAYED,
+            sample_count, snapshot.release_to_first_codec_write_ms);
+    }
     case OFFLINE_ECHO_STREAM_RESPONSE_CANCEL:
         return network_relay_cancel_response(
             context->network, turn_token);
@@ -423,7 +429,7 @@ void app_main(void)
                 face_react(context.face, FACE_REACTION_REALISE, 0.62f);
             }
             ESP_LOGI(TAG,
-                     "Audio state=%d committed=%d recorded=%ums rings=%u/%u/%ums overruns=%u underruns=%u muted=%d read_errors=%u write_errors=%u stream=%u/%u remote=%u/%u playback=%u/%u timeout=%u",
+                     "Audio state=%d committed=%d recorded=%ums rings=%u/%u/%ums overruns=%u underruns=%u muted=%d read_errors=%u write_errors=%u stream=%u/%u remote=%u/%u playback=%u/%u timeout=%u first_write=%d/%ums",
                      snapshot.state, snapshot.recording_committed,
                      (unsigned)snapshot.recorded_ms,
                      (unsigned)snapshot.precommit_buffered_ms,
@@ -439,7 +445,9 @@ void app_main(void)
                      (unsigned)snapshot.remote_event_drops,
                      (unsigned)snapshot.remote_playbacks,
                      (unsigned)snapshot.local_fallbacks,
-                     (unsigned)snapshot.remote_timeouts);
+                     (unsigned)snapshot.remote_timeouts,
+                     snapshot.first_codec_write_latency_valid,
+                     (unsigned)snapshot.release_to_first_codec_write_ms);
             previous_state = snapshot.state;
         }
 

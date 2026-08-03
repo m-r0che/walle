@@ -30,12 +30,12 @@ Control messages are UTF-8 JSON text frames, limited to 4,096 encoded bytes. Eve
 {"v":1,"type":"turn.commit","turnId":"device-generated-id"}
 {"v":1,"type":"turn.cancel","turnId":"device-generated-id"}
 {"v":1,"type":"response.cancel","turnId":"device-generated-id"}
-{"v":1,"type":"playback.report","turnId":"device-generated-id","source":"local","samples":48000}
+{"v":1,"type":"playback.report","turnId":"device-generated-id","source":"local","samples":48000,"firstCodecWriteMs":1284}
 {"v":1,"type":"telemetry.report","epoch":6,"state":6,"captureAccepting":false,"queueDepth":0,"startsQueued":3,"startUnready":1,"startMutexBusy":0,"startAlreadyActive":0,"turnsStarted":3,"turnsCommitted":3,"audioDropped":0,"audioUnready":0,"audioMutexBusy":0,"audioNotAccepting":0,"audioBackpressure":0,"audioQueueFull":0,"audioStreamInactive":0,"audioSendFailures":0,"outputEventDrops":0,"protocolErrors":0,"socketRestarts":1}
 {"v":1,"type":"ping","nonce":"bounded-value"}
 ```
 
-A successful `hello` is required before turns; binary input requires an active turn. `turn.cancel` aborts uncommitted input; `response.cancel` aborts generated output after input commit, such as when the device's bounded response deadline expires. Turn IDs and nonces are limited to 64 characters. `playback.report` is optional aggregate telemetry emitted after uninterrupted playback. It retains only the selected source and sample count; validated firmware reports `remote` only after complete response validation and reports `local` when a completed relay turn fails that gate. `telemetry.report` contains only bounded aggregate connectivity/capture counters—never PCM, credentials, SSIDs, or user content—and is sent periodically or after a capture-start decision.
+A successful `hello` is required before turns; binary input requires an active turn. `turn.cancel` aborts uncommitted input; `response.cancel` aborts generated output after input commit, such as when the device's bounded response deadline expires. Turn IDs and nonces are limited to 64 characters. `playback.report` is optional aggregate telemetry emitted after uninterrupted playback. Newer firmware includes the selected source, sample count, and device-monotonic milliseconds from the user’s release event to the first successful codec write; the latency field remains optional for compatibility with already-connected version-1 clients. Validated firmware reports `remote` only after complete response validation and reports `local` when a completed relay turn fails that gate. `telemetry.report` contains only bounded aggregate connectivity/capture counters—never PCM, credentials, SSIDs, or user content—and is sent periodically or after a capture-start decision.
 
 ### Relay → device
 

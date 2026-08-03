@@ -66,6 +66,7 @@ export type DeviceControlMessage =
       turnId: string;
       source: "remote" | "local";
       samples: number;
+      firstCodecWriteMs?: number;
     }
   | DeviceTelemetryReport
   | { v: 1; type: "ping"; nonce: string };
@@ -191,7 +192,13 @@ export function decodeControlMessage(text: string): DeviceControlMessage {
         typeof message.samples !== "number" ||
         !Number.isInteger(message.samples) ||
         message.samples <= 0 ||
-        message.samples > 7_200_000
+        message.samples > 7_200_000 ||
+        (message.firstCodecWriteMs !== undefined && (
+          typeof message.firstCodecWriteMs !== "number" ||
+          !Number.isInteger(message.firstCodecWriteMs) ||
+          message.firstCodecWriteMs < 0 ||
+          message.firstCodecWriteMs > 330_000
+        ))
       ) {
         throw new Error("playback report is invalid");
       }
