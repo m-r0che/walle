@@ -18,11 +18,11 @@
 #define FACE_CANVAS_HEIGHT 286
 #define FACE_CANVAS_X ((FACE_WIDTH - FACE_CANVAS_WIDTH) / 2)
 #define FACE_CANVAS_Y 39
-// A full face is two panel submissions at the proven 35 ms minimum interval.
-// Requesting animation faster than the resulting 70 ms visible cadence only
-// coalesces frames unevenly and makes short eye motion appear jittery.
-#define FACE_IDLE_FRAME_PERIOD_MS 72
-#define FACE_ACTIVE_FRAME_PERIOD_MS 72
+// Each scheduled dirty region fits one rotation/DMA buffer. Alternating eyes,
+// mouth, and brows uses the proven 35 ms panel envelope without paying two
+// transfers for every tiny autonomous movement.
+#define FACE_IDLE_FRAME_PERIOD_MS 36
+#define FACE_ACTIVE_FRAME_PERIOD_MS 36
 #define FACE_SLEEPING_FRAME_PERIOD_MS 140
 #define FACE_OFFLINE_FRAME_PERIOD_MS 100
 #define FACE_DRIFT_PERIOD_MS 60000
@@ -70,11 +70,19 @@ typedef struct {
     uint8_t blue;
 } raster_color_t;
 
+typedef enum {
+    FACE_DIRTY_FULL = 0,
+    FACE_DIRTY_EYES,
+    FACE_DIRTY_BROWS,
+    FACE_DIRTY_MOUTH,
+} face_dirty_region_t;
+
 struct face {
     lv_obj_t *canvas;
     uint16_t *canvas_buffer;
     lv_timer_t *timer;
     uint32_t timer_period_ms;
+    uint8_t dirty_phase;
     portMUX_TYPE state_lock;
 
     face_activity_t activity;
@@ -482,9 +490,9 @@ static void blink_openness(face_t *face, uint32_t now, float energy,
     const uint32_t left_elapsed = elapsed;
     const uint32_t right_elapsed = elapsed > right_delay
         ? elapsed - right_delay : 0;
-    const uint32_t close_ms = 120;
-    const uint32_t hold_until_ms = 150;
-    const uint32_t open_until_ms = 360;
+    const uint32_t close_ms = 100;
+    const uint32_t hold_until_ms = 125;
+    const uint32_t open_until_ms = 300;
 
     if (left_elapsed < close_ms) {
         *left = 1.0f - smoothstep((float)left_elapsed / close_ms);
@@ -946,7 +954,91 @@ static void draw_sleep_symbols(face_t *face, float seconds)
     draw_sleep_z(face, 379, 118 - drift / 2, 9);
 }
 
-static void render_face(face_t *face, uint32_t now)
+static void invalidate_face_region(face_t *face, face_dirty_region_t region)
+{
+    if (region == FACE_DIRTY_FULL) {
+        lv_obj_invalidate(face->canvas);
+        return;
+    }
+
+    // Local bounds include the outer glow and worst-case interpolated motion.
+    // Each remains below the 49,280-pixel rotation buffer even after the
+    // display driver's even-coordinate rounding and two-pixel position drift.
+    lv_area_t local;
+    switch (region) {
+    case FACE_DIRTY_EYES:
+        local = (lv_area_t) {22, 35, 329, 188};
+        break;
+    case FACE_DIRTY_BROWS:
+        local = (lv_area_t) {10, 0, 335, 90};
+        break;
+    case FACE_DIRTY_MOUTH:
+        // Full width also clears the lowest eye-glow pixels during unusually
+        // large tilts without costing another panel submission.
+        local = (lv_area_t) {10, 161, 341, 285};
+        break;
+    case FACE_DIRTY_FULL:
+    default:
+        lv_obj_invalidate(face->canvas);
+        return;
+    }
+
+    lv_area_t canvas_coords;
+    lv_obj_get_coords(face->canvas, &canvas_coords);
+    lv_area_t absolute = {
+        .x1 = canvas_coords.x1 + local.x1,
+        .y1 = canvas_coords.y1 + local.y1,
+        .x2 = canvas_coords.x1 + local.x2,
+        .y2 = canvas_coords.y1 + local.y2,
+    };
+    lv_obj_invalidate_area(face->canvas, &absolute);
+}
+
+static face_dirty_region_t next_dirty_region(face_t *face,
+                                              face_activity_t activity)
+{
+    static const face_dirty_region_t normal_cycle[] = {
+        FACE_DIRTY_EYES,
+        FACE_DIRTY_MOUTH,
+        FACE_DIRTY_EYES,
+        FACE_DIRTY_BROWS,
+    };
+    static const face_dirty_region_t speaking_cycle[] = {
+        FACE_DIRTY_EYES,
+        FACE_DIRTY_MOUTH,
+        FACE_DIRTY_EYES,
+        FACE_DIRTY_MOUTH,
+        FACE_DIRTY_BROWS,
+        FACE_DIRTY_MOUTH,
+    };
+    static const face_dirty_region_t sleeping_cycle[] = {
+        FACE_DIRTY_EYES,
+        FACE_DIRTY_EYES,
+        FACE_DIRTY_EYES,
+        FACE_DIRTY_MOUTH,
+        FACE_DIRTY_EYES,
+        FACE_DIRTY_EYES,
+        FACE_DIRTY_EYES,
+        FACE_DIRTY_BROWS,
+    };
+
+    face_dirty_region_t region;
+    if (activity == FACE_ACTIVITY_SPEAKING) {
+        region = speaking_cycle[face->dirty_phase
+            % (sizeof(speaking_cycle) / sizeof(speaking_cycle[0]))];
+    } else if (activity == FACE_ACTIVITY_SLEEPING) {
+        region = sleeping_cycle[face->dirty_phase
+            % (sizeof(sleeping_cycle) / sizeof(sleeping_cycle[0]))];
+    } else {
+        region = normal_cycle[face->dirty_phase
+            % (sizeof(normal_cycle) / sizeof(normal_cycle[0]))];
+    }
+    face->dirty_phase++;
+    return region;
+}
+
+static void render_face(face_t *face, uint32_t now,
+                        face_dirty_region_t dirty_region)
 {
     const int64_t started_us = esp_timer_get_time();
     face_activity_t activity;
@@ -1008,7 +1100,7 @@ static void render_face(face_t *face, uint32_t now)
     }
 
     lv_draw_buf_flush_cache(lv_canvas_get_draw_buf(face->canvas), NULL);
-    lv_obj_invalidate(face->canvas);
+    invalidate_face_region(face, dirty_region);
 
     const int64_t render_us = esp_timer_get_time() - started_us;
     face->report_frames++;
@@ -1061,11 +1153,12 @@ static void animation_timer_cb(lv_timer_t *timer)
     face_t *face = lv_timer_get_user_data(timer);
     const uint32_t now = lv_tick_get();
     update_position_drift(face, now);
-    render_face(face, now);
 
     portENTER_CRITICAL(&face->state_lock);
     const face_activity_t activity = face->activity;
     portEXIT_CRITICAL(&face->state_lock);
+    render_face(face, now, next_dirty_region(face, activity));
+
     const uint32_t period = frame_period_for_activity(activity);
     if (face->timer_period_ms != period) {
         face->timer_period_ms = period;
@@ -1141,7 +1234,7 @@ face_t *face_create(lv_obj_t *parent)
     face->next_saccade_ms = now + 500;
     face->next_idle_reaction_ms = now + 6500;
     face->report_started_ms = now;
-    render_face(face, now);
+    render_face(face, now, FACE_DIRTY_FULL);
     face->timer_period_ms = FACE_IDLE_FRAME_PERIOD_MS;
     face->timer = lv_timer_create(animation_timer_cb,
                                   face->timer_period_ms, face);
