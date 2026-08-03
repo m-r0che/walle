@@ -12,9 +12,6 @@ typedef struct {
     uint32_t motion_events;
     uint32_t read_errors;
     float motion_score;
-    /** High-pass movement mapped into the software-rotated landscape axes. */
-    float kinetic_x;
-    float kinetic_y;
     float accel_x;
     float accel_y;
     float accel_z;

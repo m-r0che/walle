@@ -18,11 +18,12 @@
 #define FACE_CANVAS_HEIGHT 286
 #define FACE_CANVAS_X ((FACE_WIDTH - FACE_CANVAS_WIDTH) / 2)
 #define FACE_CANVAS_Y 39
-// A full face is two panel submissions at the proven 35 ms minimum interval.
-// Requesting animation faster than the resulting 70 ms visible cadence only
-// coalesces frames unevenly and makes short eye motion appear jittery.
-#define FACE_IDLE_FRAME_PERIOD_MS 72
-#define FACE_ACTIVE_FRAME_PERIOD_MS 72
+// LVGL may request motion faster than the panel's two-transfer visible cadence;
+// completion ownership and display pacing safely coalesce those requests. This
+// keeps the next pose ready promptly without the rejected one-transfer renderer
+// recomposing the entire face 28 times per second.
+#define FACE_IDLE_FRAME_PERIOD_MS 40
+#define FACE_ACTIVE_FRAME_PERIOD_MS 36
 #define FACE_SLEEPING_FRAME_PERIOD_MS 140
 #define FACE_OFFLINE_FRAME_PERIOD_MS 100
 #define FACE_DRIFT_PERIOD_MS 60000
@@ -81,9 +82,6 @@ struct face {
     face_mood_t mood;
     float mood_intensity;
     float playback_level;
-    float kinetic_x;
-    float kinetic_y;
-    float kinetic_score;
     face_input_callback_t input_callback;
     void *input_context;
     bool ptt_pressed;
@@ -518,8 +516,7 @@ static void blink_openness(face_t *face, uint32_t now, float energy,
 static face_pose_t compose_target(face_t *face, uint32_t now,
                                   face_activity_t activity,
                                   face_mood_t mood, float mood_intensity,
-                                  float playback_level, float kinetic_x,
-                                  float kinetic_y, float kinetic_score,
+                                  float playback_level,
                                   face_reaction_t requested_reaction,
                                   float requested_reaction_intensity,
                                   uint32_t reaction_generation,
@@ -610,19 +607,6 @@ static face_pose_t compose_target(face_t *face, uint32_t now,
         const float eased_level = smoothstep(playback_level);
         target.mouth_open = 0.06f + eased_level * 0.94f;
         target.mouth_width = 0.86f + eased_level * 0.22f;
-    }
-
-    if (activity != FACE_ACTIVITY_SLEEPING) {
-        const float responsive_x = fabsf(kinetic_x) < 0.10f
-            ? 0.0f : clampf(kinetic_x, -1.0f, 1.0f);
-        const float responsive_y = fabsf(kinetic_y) < 0.10f
-            ? 0.0f : clampf(kinetic_y, -1.0f, 1.0f);
-        const float alertness = clampf(kinetic_score - 0.90f, 0.0f, 1.0f);
-        target.gaze_x += responsive_x * 0.48f;
-        target.gaze_y += responsive_y * 0.40f;
-        target.tilt += responsive_x * 0.035f;
-        target.left_eye_open += alertness * 0.05f;
-        target.right_eye_open += alertness * 0.05f;
     }
 
     clamp_pose(&target);
@@ -953,9 +937,6 @@ static void render_face(face_t *face, uint32_t now)
     face_mood_t mood;
     float mood_intensity;
     float playback_level;
-    float kinetic_x;
-    float kinetic_y;
-    float kinetic_score;
     face_reaction_t requested_reaction;
     float requested_reaction_intensity;
     uint32_t reaction_generation;
@@ -964,9 +945,6 @@ static void render_face(face_t *face, uint32_t now)
     mood = face->mood;
     mood_intensity = face->mood_intensity;
     playback_level = face->playback_level;
-    kinetic_x = face->kinetic_x;
-    kinetic_y = face->kinetic_y;
-    kinetic_score = face->kinetic_score;
     requested_reaction = face->requested_reaction;
     requested_reaction_intensity = face->requested_reaction_intensity;
     reaction_generation = face->reaction_generation;
@@ -975,7 +953,6 @@ static void render_face(face_t *face, uint32_t now)
     float reaction_amount = 0.0f;
     const face_pose_t target = compose_target(
         face, now, activity, mood, mood_intensity, playback_level,
-        kinetic_x, kinetic_y, kinetic_score,
         requested_reaction, requested_reaction_intensity,
         reaction_generation, &reaction_amount);
     update_pose(face, &target, now);
@@ -1201,18 +1178,6 @@ void face_react(face_t *face, face_reaction_t reaction, float intensity)
     face->requested_reaction = reaction;
     face->requested_reaction_intensity = clampf(intensity, 0.0f, 1.0f);
     face->reaction_generation++;
-    portEXIT_CRITICAL(&face->state_lock);
-}
-
-void face_set_kinetic_motion(face_t *face, float x, float y, float score)
-{
-    if (face == NULL) {
-        return;
-    }
-    portENTER_CRITICAL(&face->state_lock);
-    face->kinetic_x = clampf(x, -1.5f, 1.5f);
-    face->kinetic_y = clampf(y, -1.5f, 1.5f);
-    face->kinetic_score = clampf(score, 0.0f, 3.0f);
     portEXIT_CRITICAL(&face->state_lock);
 }
 
