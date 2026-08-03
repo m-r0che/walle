@@ -153,21 +153,21 @@ static uint32_t random_range(uint32_t minimum, uint32_t maximum)
 static face_pose_t neutral_pose(void)
 {
     return (face_pose_t) {
-        .left_eye_open = 0.96f,
-        .right_eye_open = 0.96f,
+        .left_eye_open = 0.99f,
+        .right_eye_open = 0.94f,
         .left_eye_scale = 1.0f,
         .right_eye_scale = 1.0f,
         .gaze_x = 0.0f,
         .gaze_y = 0.0f,
         .pupil_scale = 1.0f,
-        .left_brow_lift = 0.05f,
-        .right_brow_lift = 0.05f,
-        .left_brow_angle = 0.0f,
-        .right_brow_angle = 0.0f,
-        .smile = 0.18f,
+        .left_brow_lift = 0.08f,
+        .right_brow_lift = 0.14f,
+        .left_brow_angle = -0.02f,
+        .right_brow_angle = 0.04f,
+        .smile = 0.24f,
         .mouth_open = 0.0f,
         .mouth_width = 1.0f,
-        .tilt = 0.0f,
+        .tilt = -0.006f,
         .energy = 0.45f,
     };
 }
@@ -177,34 +177,37 @@ static face_pose_t activity_pose(face_activity_t activity)
     face_pose_t pose = neutral_pose();
     switch (activity) {
     case FACE_ACTIVITY_LISTENING:
-        pose.left_eye_open = 1.04f;
-        pose.right_eye_open = 1.04f;
-        pose.pupil_scale = 1.06f;
-        pose.left_brow_lift = 0.30f;
-        pose.right_brow_lift = 0.30f;
-        pose.smile = 0.18f;
-        pose.energy = 0.76f;
+        pose.left_eye_open = 1.12f;
+        pose.right_eye_open = 1.08f;
+        pose.pupil_scale = 1.10f;
+        pose.left_brow_lift = 0.42f;
+        pose.right_brow_lift = 0.54f;
+        pose.smile = 0.10f;
+        pose.mouth_width = 0.92f;
+        pose.tilt = 0.010f;
+        pose.energy = 0.82f;
         break;
     case FACE_ACTIVITY_THINKING:
-        pose.left_eye_open = 0.76f;
-        pose.right_eye_open = 0.90f;
-        pose.gaze_x = 0.28f;
-        pose.gaze_y = -0.32f;
-        pose.left_brow_lift = 0.02f;
-        pose.right_brow_lift = 0.36f;
-        pose.left_brow_angle = -0.16f;
-        pose.right_brow_angle = 0.10f;
-        pose.smile = -0.04f;
-        pose.tilt = -0.018f;
-        pose.energy = 0.34f;
+        pose.left_eye_open = 0.66f;
+        pose.right_eye_open = 0.96f;
+        pose.gaze_x = 0.42f;
+        pose.gaze_y = -0.42f;
+        pose.left_brow_lift = -0.08f;
+        pose.right_brow_lift = 0.52f;
+        pose.left_brow_angle = -0.26f;
+        pose.right_brow_angle = 0.18f;
+        pose.smile = -0.18f;
+        pose.tilt = -0.036f;
+        pose.energy = 0.38f;
         break;
     case FACE_ACTIVITY_SPEAKING:
-        pose.left_eye_open = 0.93f;
-        pose.right_eye_open = 0.98f;
-        pose.smile = 0.32f;
+        pose.left_eye_open = 0.88f;
+        pose.right_eye_open = 1.00f;
+        pose.smile = 0.28f;
         pose.mouth_width = 0.92f;
-        pose.left_brow_lift = 0.16f;
-        pose.right_brow_lift = 0.20f;
+        pose.left_brow_lift = 0.12f;
+        pose.right_brow_lift = 0.26f;
+        pose.tilt = -0.012f;
         pose.energy = 0.88f;
         break;
     case FACE_ACTIVITY_CONFIRM:
@@ -269,53 +272,58 @@ static void apply_mood(face_pose_t *pose, face_mood_t mood, float amount)
 {
     switch (mood) {
     case FACE_MOOD_WARM:
-        pose->smile += 0.44f * amount;
+        pose->left_eye_open -= 0.05f * amount;
+        pose->right_eye_open -= 0.10f * amount;
+        pose->smile += 0.60f * amount;
         pose->left_brow_lift += 0.10f * amount;
-        pose->right_brow_lift += 0.10f * amount;
-        pose->pupil_scale += 0.05f * amount;
+        pose->right_brow_lift += 0.22f * amount;
+        pose->pupil_scale += 0.07f * amount;
         break;
     case FACE_MOOD_CURIOUS:
-        pose->left_eye_open += 0.07f * amount;
-        pose->right_eye_open -= 0.08f * amount;
-        pose->left_eye_scale += 0.03f * amount;
-        pose->right_brow_lift += 0.34f * amount;
-        pose->left_brow_lift += 0.08f * amount;
-        pose->gaze_x += 0.18f * amount;
-        pose->gaze_y -= 0.12f * amount;
-        pose->smile += 0.16f * amount;
-        pose->tilt -= 0.040f * amount;
+        pose->left_eye_open += 0.18f * amount;
+        pose->right_eye_open -= 0.18f * amount;
+        pose->left_eye_scale += 0.06f * amount;
+        pose->right_eye_scale -= 0.03f * amount;
+        pose->right_brow_lift += 0.54f * amount;
+        pose->left_brow_lift += 0.10f * amount;
+        pose->gaze_x += 0.30f * amount;
+        pose->gaze_y -= 0.20f * amount;
+        pose->smile += 0.22f * amount;
+        pose->tilt -= 0.065f * amount;
         break;
     case FACE_MOOD_DELIGHTED:
-        pose->left_eye_open -= 0.22f * amount;
-        pose->right_eye_open -= 0.22f * amount;
-        pose->left_brow_lift += 0.30f * amount;
-        pose->right_brow_lift += 0.30f * amount;
-        pose->smile += 0.72f * amount;
-        pose->mouth_width += 0.12f * amount;
+        pose->left_eye_open -= 0.36f * amount;
+        pose->right_eye_open -= 0.32f * amount;
+        pose->left_brow_lift += 0.42f * amount;
+        pose->right_brow_lift += 0.50f * amount;
+        pose->smile += 0.92f * amount;
+        pose->mouth_width += 0.18f * amount;
         pose->energy += 0.30f * amount;
         break;
     case FACE_MOOD_UNCERTAIN:
-        pose->left_eye_open -= 0.18f * amount;
-        pose->right_eye_open += 0.04f * amount;
-        pose->left_brow_angle += 0.28f * amount;
-        pose->right_brow_angle -= 0.20f * amount;
-        pose->right_brow_lift += 0.18f * amount;
-        pose->smile -= 0.28f * amount;
-        pose->tilt += 0.030f * amount;
+        pose->left_eye_open -= 0.30f * amount;
+        pose->right_eye_open += 0.12f * amount;
+        pose->left_brow_angle += 0.48f * amount;
+        pose->right_brow_angle -= 0.38f * amount;
+        pose->right_brow_lift += 0.32f * amount;
+        pose->smile -= 0.78f * amount;
+        pose->tilt += 0.060f * amount;
         break;
     case FACE_MOOD_CONCERNED:
-        pose->left_eye_open -= 0.12f * amount;
-        pose->right_eye_open -= 0.12f * amount;
-        pose->left_brow_angle += 0.40f * amount;
-        pose->right_brow_angle -= 0.40f * amount;
-        pose->smile -= 0.42f * amount;
-        pose->pupil_scale -= 0.10f * amount;
+        pose->left_eye_open -= 0.22f * amount;
+        pose->right_eye_open -= 0.18f * amount;
+        pose->left_brow_angle += 0.62f * amount;
+        pose->right_brow_angle -= 0.62f * amount;
+        pose->left_brow_lift += 0.14f * amount;
+        pose->right_brow_lift += 0.14f * amount;
+        pose->smile -= 0.95f * amount;
+        pose->pupil_scale -= 0.16f * amount;
         break;
     case FACE_MOOD_SLEEPY:
-        pose->left_eye_open -= 0.58f * amount;
-        pose->right_eye_open -= 0.55f * amount;
-        pose->left_brow_lift -= 0.18f * amount;
-        pose->right_brow_lift -= 0.18f * amount;
+        pose->left_eye_open -= 0.70f * amount;
+        pose->right_eye_open -= 0.64f * amount;
+        pose->left_brow_lift -= 0.26f * amount;
+        pose->right_brow_lift -= 0.22f * amount;
         pose->smile += 0.12f * amount;
         pose->energy -= 0.30f * amount;
         break;
@@ -539,7 +547,7 @@ static face_pose_t compose_target(face_t *face, uint32_t now,
         mood_weight *= 0.45f;
         break;
     case FACE_ACTIVITY_SPEAKING:
-        mood_weight *= 0.72f;
+        mood_weight *= 0.90f;
         break;
     case FACE_ACTIVITY_IDLE:
     default:
@@ -864,7 +872,7 @@ static void build_mouth_curve(mouth_curve_t *mouth, float center_y,
         mouth->points[index].x = (lv_value_precise_t)(
             FACE_WIDTH / 2.0f + x_normal * 52.0f * width);
         mouth->points[index].y = (lv_value_precise_t)(
-            center_y + sinf(t * PI_F) * 32.0f * smile);
+            center_y + sinf(t * PI_F) * 40.0f * smile);
     }
 }
 
