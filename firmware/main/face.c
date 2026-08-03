@@ -27,6 +27,7 @@
 #define FACE_SLEEPING_FRAME_PERIOD_MS 140
 #define FACE_OFFLINE_FRAME_PERIOD_MS 100
 #define FACE_DRIFT_PERIOD_MS 60000
+#define DEFAULT_MOOD_INTENSITY 0.72f
 #define EYE_POINT_COUNT 17
 #define BROW_POINT_COUNT 9
 #define MOUTH_POINT_COUNT 13
@@ -81,6 +82,7 @@ struct face {
     face_activity_t activity;
     face_mood_t mood;
     float mood_intensity;
+    uint32_t mood_expires_ms;
     float playback_level;
     face_input_callback_t input_callback;
     void *input_context;
@@ -941,6 +943,12 @@ static void render_face(face_t *face, uint32_t now)
     float requested_reaction_intensity;
     uint32_t reaction_generation;
     portENTER_CRITICAL(&face->state_lock);
+    if (face->mood_expires_ms != 0
+            && time_reached(now, face->mood_expires_ms)) {
+        face->mood = FACE_MOOD_WARM;
+        face->mood_intensity = DEFAULT_MOOD_INTENSITY;
+        face->mood_expires_ms = 0;
+    }
     activity = face->activity;
     mood = face->mood;
     mood_intensity = face->mood_intensity;
@@ -1111,7 +1119,7 @@ face_t *face_create(lv_obj_t *parent)
     const uint32_t now = lv_tick_get();
     face->activity = FACE_ACTIVITY_IDLE;
     face->mood = FACE_MOOD_WARM;
-    face->mood_intensity = 0.72f;
+    face->mood_intensity = DEFAULT_MOOD_INTENSITY;
     face->pose = neutral_pose();
     face->next_drift_ms = now + FACE_DRIFT_PERIOD_MS;
     face->next_blink_ms = now + 1400;
@@ -1155,6 +1163,22 @@ void face_set_mood(face_t *face, face_mood_t mood, float intensity)
     portENTER_CRITICAL(&face->state_lock);
     face->mood = mood;
     face->mood_intensity = clampf(intensity, 0.0f, 1.0f);
+    face->mood_expires_ms = 0;
+    portEXIT_CRITICAL(&face->state_lock);
+}
+
+void face_set_mood_for(face_t *face, face_mood_t mood, float intensity,
+                       uint32_t ttl_ms)
+{
+    if (face == NULL || mood < 0 || mood >= FACE_MOOD_COUNT
+            || ttl_ms < 1000 || ttl_ms > 15000) {
+        return;
+    }
+    const uint32_t now = lv_tick_get();
+    portENTER_CRITICAL(&face->state_lock);
+    face->mood = mood;
+    face->mood_intensity = clampf(intensity, 0.0f, 1.0f);
+    face->mood_expires_ms = now + ttl_ms;
     portEXIT_CRITICAL(&face->state_lock);
 }
 

@@ -112,9 +112,11 @@ describe("OpenAI Realtime session", () => {
   it("sends manual input and returns bounded PCM chunks", async () => {
     const audio: Uint8Array[] = [];
     const done: Array<{ turnId: string; samples: number }> = [];
+    const transcripts: Array<{ turnId: string; text: string }> = [];
     const failures: string[] = [];
     const { session, transport } = await connect({
       onAudio: (_turnId, pcm) => audio.push(pcm),
+      onTranscript: (turnId, text) => transcripts.push({ turnId, text }),
       onDone: (turnId, samples) => done.push({ turnId, samples }),
       onFailed: (_turnId, reason) => failures.push(reason),
     });
@@ -144,6 +146,11 @@ describe("OpenAI Realtime session", () => {
       delta: base64(generated),
     });
     transport.message({
+      type: "response.output_audio_transcript.done",
+      response_id: "resp-1",
+      transcript: "That’s lovely.",
+    });
+    transport.message({
       type: "response.done",
       response: { id: "resp-1", status: "completed" },
     });
@@ -151,6 +158,9 @@ describe("OpenAI Realtime session", () => {
     expect(audio.map((chunk) => chunk.byteLength)).toEqual([1_920, 480]);
     expect(new Uint8Array([...audio[0], ...audio[1]])).toEqual(generated);
     expect(done).toEqual([{ turnId: "turn-1", samples: 1_200 }]);
+    expect(transcripts).toEqual([
+      { turnId: "turn-1", text: "That’s lovely." },
+    ]);
     expect(failures).toEqual([]);
   });
 

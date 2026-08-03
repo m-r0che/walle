@@ -192,6 +192,7 @@ static void handle_face_input(face_input_event_t event, void *opaque_context)
     case FACE_INPUT_PTT_START:
         error = offline_echo_record_start(context->echo);
         if (error == ESP_OK) {
+            face_set_mood(context->face, FACE_MOOD_WARM, 0.72f);
             ESP_LOGI(TAG, "PTT pressed");
         }
         break;
@@ -251,6 +252,39 @@ static bool handle_committed_audio_stream(
     }
     return network_relay_capture(context->network, relay_event,
                                  turn_token, samples, sample_count);
+}
+
+static void handle_semantic_affect(
+    void *opaque_context, network_relay_affect_t affect,
+    uint8_t intensity_percent, uint32_t ttl_ms)
+{
+    app_context_t *context = opaque_context;
+    if (context == NULL || context->face == NULL) {
+        return;
+    }
+    face_mood_t mood;
+    switch (affect) {
+    case NETWORK_RELAY_AFFECT_CURIOUS:
+        mood = FACE_MOOD_CURIOUS;
+        break;
+    case NETWORK_RELAY_AFFECT_DELIGHTED:
+        mood = FACE_MOOD_DELIGHTED;
+        break;
+    case NETWORK_RELAY_AFFECT_UNCERTAIN:
+        mood = FACE_MOOD_UNCERTAIN;
+        break;
+    case NETWORK_RELAY_AFFECT_CONCERNED:
+        mood = FACE_MOOD_CONCERNED;
+        break;
+    case NETWORK_RELAY_AFFECT_WARM:
+    default:
+        mood = FACE_MOOD_WARM;
+        break;
+    }
+    face_set_mood_for(context->face, mood,
+                      (float)intensity_percent / 100.0f, ttl_ms);
+    ESP_LOGI(TAG, "Semantic affect=%d intensity=%u ttl=%ums",
+             affect, (unsigned)intensity_percent, (unsigned)ttl_ms);
 }
 
 static bool handle_remote_output(
@@ -378,6 +412,12 @@ void app_main(void)
         if (output_error != ESP_OK) {
             ESP_LOGW(TAG, "Remote output observer failed: %s",
                      esp_err_to_name(output_error));
+        }
+        const esp_err_t affect_error = network_relay_set_affect_sink(
+            context.network, handle_semantic_affect, &context);
+        if (affect_error != ESP_OK) {
+            ESP_LOGW(TAG, "Semantic affect observer failed: %s",
+                     esp_err_to_name(affect_error));
         }
         const esp_err_t sink_error = offline_echo_set_stream_sink(
             context.echo, handle_committed_audio_stream, &context);

@@ -16,6 +16,20 @@ typedef enum {
 } network_relay_capture_event_t;
 
 typedef enum {
+    NETWORK_RELAY_AFFECT_WARM = 0,
+    NETWORK_RELAY_AFFECT_CURIOUS,
+    NETWORK_RELAY_AFFECT_DELIGHTED,
+    NETWORK_RELAY_AFFECT_UNCERTAIN,
+    NETWORK_RELAY_AFFECT_CONCERNED,
+} network_relay_affect_t;
+
+typedef void (*network_relay_affect_sink_t)(
+    void *context,
+    network_relay_affect_t affect,
+    uint8_t intensity_percent,
+    uint32_t ttl_ms);
+
+typedef enum {
     NETWORK_RELAY_OUTPUT_AUDIO = 0,
     NETWORK_RELAY_OUTPUT_DONE,
     NETWORK_RELAY_OUTPUT_CANCELLED,
@@ -108,6 +122,11 @@ bool network_relay_capture(network_relay_t *relay,
 /** Install the bounded callback-to-audio output seam. */
 esp_err_t network_relay_set_output_sink(network_relay_t *relay,
                                         network_relay_output_sink_t sink,
+                                        void *context);
+
+/** Install the bounded semantic-affect callback; activity remains local. */
+esp_err_t network_relay_set_affect_sink(network_relay_t *relay,
+                                        network_relay_affect_sink_t sink,
                                         void *context);
 
 /** Queue a scoped cancellation for generated output after local timeout. */

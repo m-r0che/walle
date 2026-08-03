@@ -59,6 +59,10 @@ void face_set_activity(face_t *face, face_activity_t activity);
 
 /** Set the slow personality bias. Intensity is clamped to 0.0–1.0. */
 void face_set_mood(face_t *face, face_mood_t mood, float intensity);
+
+/** Apply a bounded semantic mood which returns to warm when its TTL expires. */
+void face_set_mood_for(face_t *face, face_mood_t mood, float intensity,
+                       uint32_t ttl_ms);
 face_mood_t face_get_mood(face_t *face);
 
 /** Start a bounded local reaction which eases back into the underlying face. */

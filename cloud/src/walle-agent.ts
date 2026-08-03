@@ -6,6 +6,11 @@ import {
 } from "agents";
 
 import {
+  classifyFaceAffect,
+  FACE_AFFECT_VERSION,
+  type FaceAffectIntent,
+} from "./affect";
+import {
   OpenAIRealtimeSession,
 } from "./openai-realtime";
 import { WALLE_PERSONALITY_VERSION } from "./personality";
@@ -34,6 +39,10 @@ export type RelayDebugStatus = {
   lastTurn: TurnMetrics | null;
   lastPlayback: PlaybackMetrics | null;
   lastGeneration: GenerationMetrics | null;
+  lastAffect: (FaceAffectIntent & {
+    turnId: string;
+    createdAt: number;
+  }) | null;
   pendingResponse: boolean;
   providerError: string | null;
   protocolError: string | null;
@@ -41,6 +50,7 @@ export type RelayDebugStatus = {
   steadyOutputPaceMs: number;
   playbackMode: "buffered";
   personalityVersion: string;
+  affectVersion: string;
   latestTelemetry: (DeviceTelemetryReport & {
     connectionId: string;
     receivedAt: number;
@@ -99,6 +109,7 @@ type PendingResponse = {
   pumpActive: boolean;
   upstreamOutputSamples: number | null;
   generationCompletedAt: number | null;
+  affectSent: boolean;
 };
 
 // Fill the initial jitter buffer quickly, then match 960 samples / 24 kHz.
@@ -135,6 +146,10 @@ export class WalleAgent extends Agent<WalleEnv> {
   private latestTelemetry: (DeviceTelemetryReport & {
     connectionId: string;
     receivedAt: number;
+  }) | null = null;
+  private lastAffect: (FaceAffectIntent & {
+    turnId: string;
+    createdAt: number;
   }) | null = null;
   private lastGenerationFailure: {
     turnId: string;
@@ -289,6 +304,7 @@ export class WalleAgent extends Agent<WalleEnv> {
       lastTurn: this.getLastTurnMetrics(),
       lastPlayback: this.getLastPlaybackMetrics(),
       lastGeneration: this.getLastGenerationMetrics(),
+      lastAffect: this.lastAffect,
       pendingResponse: this.pendingResponse !== null,
       providerError: this.providerError,
       protocolError: this.protocolError,
@@ -296,6 +312,7 @@ export class WalleAgent extends Agent<WalleEnv> {
       steadyOutputPaceMs: OUTPUT_STEADY_PACE_MS,
       playbackMode: "buffered",
       personalityVersion: WALLE_PERSONALITY_VERSION,
+      affectVersion: FACE_AFFECT_VERSION,
       latestTelemetry: this.latestTelemetry,
       lastGenerationFailure: this.lastGenerationFailure,
     };
@@ -528,6 +545,7 @@ export class WalleAgent extends Agent<WalleEnv> {
             pumpActive: false,
             upstreamOutputSamples: null,
             generationCompletedAt: null,
+            affectSent: false,
           };
           try {
             if (this.realtime === null) {
@@ -755,6 +773,9 @@ export class WalleAgent extends Agent<WalleEnv> {
         {
           onAudio: (turnId, pcm) =>
             this.forwardRealtimeAudio(connectionId, turnId, pcm),
+          onTranscript: (turnId, transcript) =>
+            this.forwardRealtimeAffect(
+              connectionId, turnId, transcript),
           onDone: (turnId, outputSamples) =>
             this.finishRealtimeTurn(
               connectionId, turnId, outputSamples),
@@ -789,6 +810,35 @@ export class WalleAgent extends Agent<WalleEnv> {
       }));
     }
     return this.provider;
+  }
+
+  private forwardRealtimeAffect(
+    connectionId: string,
+    turnId: string,
+    transcript: string,
+  ): void {
+    const pending = this.pendingResponse;
+    if (pending === null || pending.connectionId !== connectionId
+        || pending.turnId !== turnId || pending.affectSent) return;
+    const connection = this.getConnection(connectionId);
+    if (connection === undefined) return;
+
+    const intent = classifyFaceAffect(transcript);
+    sendJson(connection, {
+      v: 1,
+      type: "face.affect",
+      turnId,
+      ...intent,
+    });
+    pending.affectSent = true;
+    this.lastAffect = { turnId, ...intent, createdAt: Date.now() };
+    console.log(JSON.stringify({
+      event: "device.face_affect",
+      installation: this.name,
+      connectionId,
+      turnId,
+      ...intent,
+    }));
   }
 
   private forwardRealtimeAudio(
@@ -877,6 +927,9 @@ export class WalleAgent extends Agent<WalleEnv> {
         || pending.outputSamples !== outputSamples) {
       this.failRealtimeTurn(connectionId, turnId, "output_count_mismatch");
       return;
+    }
+    if (!pending.affectSent) {
+      this.forwardRealtimeAffect(connectionId, turnId, "");
     }
     pending.upstreamOutputSamples = outputSamples;
     pending.generationCompletedAt = Date.now();

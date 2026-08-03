@@ -42,12 +42,15 @@ A successful `hello` is required before turns; binary input requires an active t
 ```json
 {"v":1,"type":"ready","mode":"openai","playback":"buffered","sampleRate":24000,"channels":1,"sampleFormat":"pcm16le","sessionEpoch":6}
 {"v":1,"type":"turn.started","turnId":"..."}
+{"v":1,"type":"face.affect","turnId":"...","affect":"curious","intensity":55,"ttlMs":12000}
 {"v":1,"type":"turn.done","turnId":"...","frames":287,"inputSamples":73472,"outputSamples":48000}
 {"v":1,"type":"turn.cancelled","turnId":"..."}
 {"v":1,"type":"pong","nonce":"..."}
 ```
 
 `inputSamples` must match the complete committed device input; `outputSamples` must match the complete binary output stream and may differ in duration. Echo-era firmware also accepts the legacy single `samples` field as both counts. Remote PCM remains unreadable unless relay input matches authoritative local capture and buffered output matches relay output.
+
+The initial classifier is versioned as `walle-transcript-affect-v1`. `face.affect` is optional, scoped to the active output turn, and restricted to `warm`, `curious`, `delighted`, `uncertain`, or `concerned`; intensity is 1–100 and TTL is 1,000–15,000 ms. It carries semantic intent only. The device owns truthful activity, expiry, interpolation, blink, gaze, breathing, and actual-playback mouth motion. Missing, stale, malformed, or expired affect can never delay or invalidate audio.
 
 Malformed or out-of-order messages close the socket with application code `4002`. A newer connection to the same installation replaces the old socket with code `4009`. `sessionEpoch` is positive, increases for every device-side client recreation, and must match in `hello`/`ready`; queued items from older epochs are discarded. The device sends nonce-checked application heartbeats and recreates the client after a missing pong or bounded session lifetime. During bring-up, authenticated `GET /v1/debug/last-turn` returns connection state and aggregate counts for the latest turn; PCM is never retained or returned.
 

@@ -174,6 +174,8 @@ struct network_relay {
     uint8_t *audio_tx_frame;
     network_relay_output_sink_t output_sink;
     void *output_context;
+    network_relay_affect_sink_t affect_sink;
+    void *affect_context;
     char active_turn_id[64];
     char output_turn_id[64];
     char relay_uri[384];
@@ -332,6 +334,24 @@ static bool emit_output_event(network_relay_t *relay,
     return true;
 }
 
+static bool emit_affect_event(network_relay_t *relay,
+                              network_relay_affect_t affect,
+                              uint8_t intensity_percent,
+                              uint32_t ttl_ms)
+{
+    network_relay_affect_sink_t sink;
+    void *context;
+    portENTER_CRITICAL(&relay->stream_lock);
+    sink = relay->affect_sink;
+    context = relay->affect_context;
+    portEXIT_CRITICAL(&relay->stream_lock);
+    if (sink == NULL) {
+        return false;
+    }
+    sink(context, affect, intensity_percent, ttl_ms);
+    return true;
+}
+
 static void invalidate_output_turn(network_relay_t *relay, bool notify)
 {
     const bool active = atomic_exchange(
@@ -389,6 +409,29 @@ static bool control_named_count(network_relay_t *relay,
     return true;
 }
 
+static bool control_face_affect(network_relay_t *relay,
+                                network_relay_affect_t *affect)
+{
+    static const struct {
+        const char *field;
+        network_relay_affect_t affect;
+    } choices[] = {
+        {"\"affect\":\"warm\"", NETWORK_RELAY_AFFECT_WARM},
+        {"\"affect\":\"curious\"", NETWORK_RELAY_AFFECT_CURIOUS},
+        {"\"affect\":\"delighted\"", NETWORK_RELAY_AFFECT_DELIGHTED},
+        {"\"affect\":\"uncertain\"", NETWORK_RELAY_AFFECT_UNCERTAIN},
+        {"\"affect\":\"concerned\"", NETWORK_RELAY_AFFECT_CONCERNED},
+    };
+    for (size_t index = 0;
+            index < sizeof(choices) / sizeof(choices[0]); index++) {
+        if (strstr(relay->control_rx, choices[index].field) != NULL) {
+            *affect = choices[index].affect;
+            return true;
+        }
+    }
+    return false;
+}
+
 static void handle_control_payload(network_relay_t *relay,
                                    const esp_websocket_event_data_t *data)
 {
@@ -439,6 +482,21 @@ static void handle_control_payload(network_relay_t *relay,
         xEventGroupSetBits(relay->events, SOCKET_READY_BIT);
         set_state(relay, NETWORK_RELAY_READY);
         ESP_LOGI(TAG, "Relay protocol epoch=%u ready", epoch);
+    } else if (strstr(relay->control_rx,
+                      "\"type\":\"face.affect\"") != NULL) {
+        network_relay_affect_t affect;
+        uint32_t intensity = 0;
+        uint32_t ttl_ms = 0;
+        if (!control_matches_output_turn(relay)
+                || !control_face_affect(relay, &affect)
+                || !control_named_count(
+                    relay, "intensity", 100, &intensity)
+                || !control_named_count(relay, "ttlMs", 15000, &ttl_ms)
+                || ttl_ms < 1000
+                || !emit_affect_event(
+                    relay, affect, (uint8_t)intensity, ttl_ms)) {
+            increment_counter(relay, &relay->snapshot.protocol_errors);
+        }
     } else if (strstr(relay->control_rx,
                       "\"type\":\"turn.done\"") != NULL) {
         uint32_t input_samples = 0;
@@ -1579,6 +1637,20 @@ esp_err_t network_relay_set_output_sink(network_relay_t *relay,
     portENTER_CRITICAL(&relay->stream_lock);
     relay->output_sink = sink;
     relay->output_context = context;
+    portEXIT_CRITICAL(&relay->stream_lock);
+    return ESP_OK;
+}
+
+esp_err_t network_relay_set_affect_sink(network_relay_t *relay,
+                                        network_relay_affect_sink_t sink,
+                                        void *context)
+{
+    if (relay == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    portENTER_CRITICAL(&relay->stream_lock);
+    relay->affect_sink = sink;
+    relay->affect_context = context;
     portEXIT_CRITICAL(&relay->stream_lock);
     return ESP_OK;
 }

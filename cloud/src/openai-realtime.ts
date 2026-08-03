@@ -24,6 +24,7 @@ export type RealtimeTransportConnector = (
 
 export type OpenAIRealtimeHandlers = {
   onAudio(turnId: string, pcm: Uint8Array): void;
+  onTranscript?(turnId: string, transcript: string): void;
   onDone(turnId: string, outputSamples: number): void;
   onFailed(turnId: string, reason: string): void;
   onUnavailable?(reason: string): void;
@@ -33,6 +34,7 @@ type ActiveTurn = {
   turnId: string;
   responseId: string | null;
   outputBytes: number;
+  transcriptReported: boolean;
 };
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -192,7 +194,12 @@ export class OpenAIRealtimeSession {
     if (!this.ready || this.closed || this.activeTurn !== null) {
       throw new Error("OpenAI session cannot start a turn");
     }
-    this.activeTurn = { turnId, responseId: null, outputBytes: 0 };
+    this.activeTurn = {
+      turnId,
+      responseId: null,
+      outputBytes: 0,
+      transcriptReported: false,
+    };
     this.send({ type: "input_audio_buffer.clear" });
   }
 
@@ -284,6 +291,9 @@ export class OpenAIRealtimeSession {
       case "response.output_audio.delta":
         this.handleAudioDelta(event);
         return;
+      case "response.output_audio_transcript.done":
+        this.handleTranscriptDone(event);
+        return;
       case "response.done":
         this.handleResponseDone(event);
         return;
@@ -346,6 +356,21 @@ export class OpenAIRealtimeSession {
         turn.turnId,
         bytes.slice(offset, offset + DEVICE_FRAME_BYTES),
       );
+    }
+  }
+
+  private handleTranscriptDone(event: Record<string, unknown>): void {
+    const turn = this.activeTurn;
+    if (turn === null || turn.responseId === null
+        || event.response_id !== turn.responseId
+        || typeof event.transcript !== "string"
+        || event.transcript.length > 2_048) {
+      this.failActive("transcript_identity_mismatch");
+      return;
+    }
+    if (!turn.transcriptReported) {
+      turn.transcriptReported = true;
+      this.handlers.onTranscript?.(turn.turnId, event.transcript);
     }
   }
 
