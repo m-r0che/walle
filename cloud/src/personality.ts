@@ -1,5 +1,5 @@
 export const WALLE_PERSONALITY_VERSION = "walle-warm-curious-v2";
-export const WALLE_VOICE_PROFILE_VERSION = "walle-british-quirky-v1";
+export const WALLE_VOICE_PROFILE_VERSION = "walle-british-quirky-ballad-v1";
 
 export const WALLE_PERSONALITY_INSTRUCTIONS = `
 # Role and Objective

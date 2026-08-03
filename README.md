@@ -10,7 +10,7 @@ Core hardware and voice bring-up are complete. The verified device runs a locall
 
 The face composes truthful activity, slow mood, bounded reactions, blink, gaze, breathing, and audio-reactive mouth motion locally. After prolonged idle stillness it falls asleep with drifting `Z`s; meaningful QMI8658 motion or touch wakes it without disconnecting Wi-Fi or the provider session. The display retains the physically validated CO5300 path: portrait panel addressing, LVGL partial-region software rotation, one completion-owned 110-row internal DMA buffer, and at least 35 ms between submissions. Hardware axis-swapping and bursty transfer candidates were rejected after visible corruption or loss of responsiveness.
 
-The cloud relay validates epochs, turn ownership, sequence, hashes, sample counts, cancellation, and heartbeat state. Generated PCM uses bounded rolling storage and begins after 500 ms of contiguous validated audio. Walle’s active constitution is versioned as `walle-warm-curious-v2`, with the separate `walle-british-quirky-v1` voice-performance profile.
+The cloud relay validates epochs, turn ownership, sequence, hashes, sample counts, cancellation, and heartbeat state. Generated PCM uses bounded rolling storage and begins after 500 ms of contiguous validated audio. Walle’s active constitution is versioned as `walle-warm-curious-v2`, with the separate `walle-british-quirky-ballad-v1` voice-performance profile.
 
 - [Final implementation plan](docs/final-plan.md)
 - [Research and architecture rationale](docs/research/direction-of-travel.md)

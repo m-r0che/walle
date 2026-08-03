@@ -109,7 +109,7 @@ describe("OpenAI Realtime session", () => {
       type: "audio/pcm",
       rate: 24_000,
     });
-    expect(audio.output.voice).toBe("shimmer");
+    expect(audio.output.voice).toBe("ballad");
   });
 
   it("sends manual input and returns bounded PCM chunks", async () => {
