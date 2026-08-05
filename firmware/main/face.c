@@ -1,5 +1,7 @@
 #include "face.h"
 
+#include "face_sprite_assets.h"
+
 #include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -28,6 +30,7 @@
 #define FACE_OFFLINE_FRAME_PERIOD_MS 100
 #define FACE_DRIFT_PERIOD_MS 60000
 #define DEFAULT_MOOD_INTENSITY 0.72f
+#define FACE_USE_SPRITES 1
 #define EYE_POINT_COUNT 17
 #define BROW_POINT_COUNT 9
 #define MOUTH_POINT_COUNT 13
@@ -676,6 +679,7 @@ static void update_position_drift(face_t *face, uint32_t now)
                    FACE_CANVAS_Y + face->drift_y);
 }
 
+#if !FACE_USE_SPRITES
 static uint16_t pack_dimmed_color(raster_color_t color, uint8_t brightness)
 {
     const uint16_t red = ((color.red >> 3) * brightness + 127) / 255;
@@ -683,6 +687,7 @@ static uint16_t pack_dimmed_color(raster_color_t color, uint8_t brightness)
     const uint16_t blue = ((color.blue >> 3) * brightness + 127) / 255;
     return (red << 11) | (green << 5) | blue;
 }
+#endif
 
 static uint16_t *canvas_pixel_at(face_t *face, int32_t x, int32_t y)
 {
@@ -694,6 +699,64 @@ static uint16_t *canvas_pixel_at(face_t *face, int32_t x, int32_t y)
     return &face->canvas_buffer[y * FACE_CANVAS_WIDTH + x];
 }
 
+#if FACE_USE_SPRITES
+static uint16_t alpha_blend_rgb565(uint16_t destination, uint16_t source,
+                                    uint8_t alpha)
+{
+    if (alpha == 255) {
+        return source;
+    }
+    const uint32_t inverse = 255 - alpha;
+    const uint32_t source_red = (source >> 11) & 0x1f;
+    const uint32_t source_green = (source >> 5) & 0x3f;
+    const uint32_t source_blue = source & 0x1f;
+    const uint32_t dest_red = (destination >> 11) & 0x1f;
+    const uint32_t dest_green = (destination >> 5) & 0x3f;
+    const uint32_t dest_blue = destination & 0x1f;
+    const uint32_t red = (source_red * alpha + dest_red * inverse + 127) / 255;
+    const uint32_t green = (source_green * alpha + dest_green * inverse + 127) / 255;
+    const uint32_t blue = (source_blue * alpha + dest_blue * inverse + 127) / 255;
+    return (uint16_t)((red << 11) | (green << 5) | blue);
+}
+
+static void blit_sprite_xy(face_t *face, face_sprite_id_t sprite_id,
+                           int32_t x, int32_t y)
+{
+    const face_sprite_asset_t *sprite = &g_face_sprites[sprite_id];
+    for (uint16_t row = 0; row < sprite->height; row++) {
+        for (uint16_t column = 0; column < sprite->width; column++) {
+            const size_t index = (size_t)row * sprite->width + column;
+            const uint8_t alpha = sprite->alpha[index];
+            if (alpha == 0) {
+                continue;
+            }
+            uint16_t *pixel = canvas_pixel_at(face, x + column, y + row);
+            if (pixel == NULL) {
+                continue;
+            }
+            *pixel = alpha_blend_rgb565(*pixel, sprite->pixels[index], alpha);
+        }
+    }
+}
+
+static void blit_sprite_sheet_origin(face_t *face, face_sprite_id_t sprite_id)
+{
+    const face_sprite_asset_t *sprite = &g_face_sprites[sprite_id];
+    blit_sprite_xy(face, sprite_id, sprite->sheet_x, sprite->sheet_y);
+}
+
+static void blit_sprite_center(face_t *face, face_sprite_id_t sprite_id,
+                               int32_t center_x, int32_t center_y,
+                               int32_t offset_x, int32_t offset_y)
+{
+    const face_sprite_asset_t *sprite = &g_face_sprites[sprite_id];
+    blit_sprite_xy(face, sprite_id,
+                   center_x - sprite->width / 2 + offset_x,
+                   center_y - sprite->height / 2 + offset_y);
+}
+#endif
+
+#if !FACE_USE_SPRITES
 static void brighten_pixel(face_t *face, int32_t x, int32_t y,
                            uint16_t source)
 {
@@ -939,6 +1002,207 @@ static void draw_sleep_symbols(face_t *face, float seconds)
     draw_sleep_z(face, 358, 154 - drift, 13);
     draw_sleep_z(face, 379, 118 - drift / 2, 9);
 }
+#endif
+
+#if FACE_USE_SPRITES
+static void draw_sprite_head(face_t *face)
+{
+    blit_sprite_sheet_origin(face, FACE_SPRITE_HEAD_BLANK);
+    blit_sprite_sheet_origin(face, FACE_SPRITE_EAR_LEFT);
+    blit_sprite_sheet_origin(face, FACE_SPRITE_EAR_RIGHT);
+    blit_sprite_sheet_origin(face, FACE_SPRITE_ANTENNA);
+}
+
+static void sprite_eye_choice(face_activity_t activity, face_mood_t mood,
+                              const face_pose_t *pose,
+                              face_sprite_id_t *left,
+                              face_sprite_id_t *right,
+                              bool *closed)
+{
+    *closed = false;
+    if (activity == FACE_ACTIVITY_SLEEPING) {
+        *left = FACE_SPRITE_EYE_SLEEP_CLOSED_LEFT;
+        *right = FACE_SPRITE_EYE_SLEEP_CLOSED_RIGHT;
+        *closed = true;
+        return;
+    }
+    if (pose->left_eye_open < 0.24f || pose->right_eye_open < 0.24f) {
+        *left = FACE_SPRITE_EYE_HAPPY_CLOSED_LEFT;
+        *right = FACE_SPRITE_EYE_HAPPY_CLOSED_RIGHT;
+        *closed = true;
+        return;
+    }
+    if (activity == FACE_ACTIVITY_THINKING) {
+        *left = FACE_SPRITE_EYE_DEVIOUS_LEFT;
+        *right = FACE_SPRITE_EYE_DEVIOUS_RIGHT;
+        return;
+    }
+    if (activity == FACE_ACTIVITY_SUCCESS || mood == FACE_MOOD_DELIGHTED) {
+        *left = FACE_SPRITE_EYE_HAPPY_CLOSED_LEFT;
+        *right = FACE_SPRITE_EYE_HAPPY_CLOSED_RIGHT;
+        *closed = true;
+        return;
+    }
+    if (activity == FACE_ACTIVITY_ERROR || activity == FACE_ACTIVITY_OFFLINE
+            || mood == FACE_MOOD_CONCERNED) {
+        *left = FACE_SPRITE_EYE_WORRIED_LEFT;
+        *right = FACE_SPRITE_EYE_WORRIED_RIGHT;
+        return;
+    }
+    if (mood == FACE_MOOD_UNCERTAIN) {
+        *left = FACE_SPRITE_EYE_HALF_LEFT;
+        *right = FACE_SPRITE_EYE_HALF_RIGHT;
+        return;
+    }
+    if (pose->left_eye_open < 0.62f || pose->right_eye_open < 0.62f
+            || mood == FACE_MOOD_SLEEPY) {
+        *left = FACE_SPRITE_EYE_HALF_LEFT;
+        *right = FACE_SPRITE_EYE_HALF_RIGHT;
+        return;
+    }
+    *left = FACE_SPRITE_EYE_OPEN_LEFT;
+    *right = FACE_SPRITE_EYE_OPEN_RIGHT;
+}
+
+static void draw_sprite_eyes(face_t *face, face_activity_t activity,
+                             face_mood_t mood, const face_pose_t *pose)
+{
+    face_sprite_id_t left;
+    face_sprite_id_t right;
+    bool closed;
+    sprite_eye_choice(activity, mood, pose, &left, &right, &closed);
+    blit_sprite_center(face, left, 138, 165, 0, 0);
+    blit_sprite_center(face, right, 310, 165, 0, 0);
+    if (closed) {
+        return;
+    }
+
+    face_sprite_id_t pupil = FACE_SPRITE_PUPIL_SMALL;
+    if (activity == FACE_ACTIVITY_LISTENING) {
+        pupil = FACE_SPRITE_PUPIL_MEDIUM;
+    } else if (activity == FACE_ACTIVITY_CONFIRM
+               || activity == FACE_ACTIVITY_SUCCESS) {
+        pupil = FACE_SPRITE_PUPIL_LARGE;
+    }
+    if (mood == FACE_MOOD_DELIGHTED) {
+        pupil = FACE_SPRITE_PUPIL_HEART;
+    }
+    const int32_t gaze_x = (int32_t)(clampf(pose->gaze_x, -1.0f, 1.0f) * 14.0f);
+    const int32_t gaze_y = (int32_t)(clampf(pose->gaze_y, -1.0f, 1.0f) * 8.0f);
+    blit_sprite_center(face, pupil, 138, 165, gaze_x, gaze_y + 5);
+    blit_sprite_center(face, pupil, 310, 165, gaze_x, gaze_y + 5);
+}
+
+static void draw_sprite_brows(face_t *face, face_activity_t activity,
+                              face_mood_t mood)
+{
+    if (activity == FACE_ACTIVITY_SLEEPING
+            || activity == FACE_ACTIVITY_LISTENING
+            || activity == FACE_ACTIVITY_SPEAKING
+            || mood == FACE_MOOD_WARM) {
+        return;
+    }
+    face_sprite_id_t left = FACE_SPRITE_BROW_SOFT_LEFT;
+    face_sprite_id_t right = FACE_SPRITE_BROW_SOFT_RIGHT;
+    if (activity == FACE_ACTIVITY_ERROR || mood == FACE_MOOD_CONCERNED) {
+        left = FACE_SPRITE_BROW_RAISED_LEFT;
+        right = FACE_SPRITE_BROW_RAISED_RIGHT;
+    } else if (mood == FACE_MOOD_CURIOUS) {
+        left = FACE_SPRITE_BROW_SOFT_LEFT;
+        right = FACE_SPRITE_BROW_SOFT_RIGHT;
+    } else if (mood == FACE_MOOD_UNCERTAIN) {
+        left = FACE_SPRITE_BROW_RAISED_LEFT;
+        right = FACE_SPRITE_BROW_SOFT_RIGHT;
+    } else if (activity == FACE_ACTIVITY_THINKING) {
+        left = FACE_SPRITE_BROW_SLANT_LEFT;
+        right = FACE_SPRITE_BROW_SLANT_RIGHT;
+    }
+    blit_sprite_center(face, left, 138, 129, 0, 0);
+    blit_sprite_center(face, right, 310, 129, 0, 0);
+}
+
+static face_sprite_id_t sprite_mouth_choice(face_activity_t activity,
+                                            face_mood_t mood,
+                                            float playback_level)
+{
+    if (activity == FACE_ACTIVITY_SLEEPING) {
+        return FACE_SPRITE_MOUTH_SLEEPY_POUT;
+    }
+    if (activity == FACE_ACTIVITY_SPEAKING) {
+        const float level = smoothstep(playback_level);
+        if (level < 0.14f) {
+            return FACE_SPRITE_MOUTH_SMILE_GENTLE;
+        }
+        if (level < 0.38f) {
+            return FACE_SPRITE_MOUTH_OPEN_SMALL;
+        }
+        if (level < 0.68f) {
+            return FACE_SPRITE_MOUTH_TALK_OVAL;
+        }
+        return FACE_SPRITE_MOUTH_TALK_WIDE;
+    }
+    if (activity == FACE_ACTIVITY_THINKING) {
+        return FACE_SPRITE_MOUTH_SMIRK;
+    }
+    if (activity == FACE_ACTIVITY_ERROR || mood == FACE_MOOD_CONCERNED) {
+        return FACE_SPRITE_MOUTH_SAD_SOFT;
+    }
+    if (mood == FACE_MOOD_UNCERTAIN || activity == FACE_ACTIVITY_OFFLINE) {
+        return FACE_SPRITE_MOUTH_FROWN_FLAT;
+    }
+    if (activity == FACE_ACTIVITY_SUCCESS || mood == FACE_MOOD_DELIGHTED) {
+        return FACE_SPRITE_MOUTH_SMILE_WIDE;
+    }
+    if (mood == FACE_MOOD_CURIOUS || activity == FACE_ACTIVITY_CONFIRM) {
+        return FACE_SPRITE_MOUTH_SURPRISED_O;
+    }
+    return FACE_SPRITE_MOUTH_SMILE_GENTLE;
+}
+
+static void draw_sprite_mouth(face_t *face, face_activity_t activity,
+                              face_mood_t mood, float playback_level)
+{
+    const face_sprite_id_t mouth = sprite_mouth_choice(
+        activity, mood, playback_level);
+    int32_t y = 246;
+    if (mouth == FACE_SPRITE_MOUTH_SLEEPY_POUT
+            || mouth == FACE_SPRITE_MOUTH_SAD_SOFT
+            || mouth == FACE_SPRITE_MOUTH_SMIRK
+            || mouth == FACE_SPRITE_MOUTH_FROWN_FLAT) {
+        y = 250;
+    } else if (mouth == FACE_SPRITE_MOUTH_TALK_WIDE
+               || mouth == FACE_SPRITE_MOUTH_SURPRISED_O) {
+        y = 248;
+    }
+    blit_sprite_center(face, mouth, 224, y, 0, 0);
+}
+
+static void draw_sprite_accents(face_t *face, face_activity_t activity,
+                                float seconds)
+{
+    if (activity == FACE_ACTIVITY_SLEEPING) {
+        const int32_t drift = (int32_t)fmodf(seconds * 7.0f, 28.0f);
+        blit_sprite_center(face, FACE_SPRITE_ACCENT_Z_LARGE,
+                           65, 106 - drift, 0, 0);
+        blit_sprite_center(face, FACE_SPRITE_ACCENT_Z_SMALL,
+                           106, 83 - drift / 2, 0, 0);
+    } else if (activity == FACE_ACTIVITY_LISTENING) {
+        blit_sprite_center(face, FACE_SPRITE_ACCENT_SOUND_WAVE_SMALL,
+                           384, 155, 0, 0);
+    }
+}
+
+static void draw_sprite_face(face_t *face, face_activity_t activity,
+                             face_mood_t mood, const face_pose_t *pose,
+                             float playback_level, float seconds)
+{
+    draw_sprite_head(face);
+    draw_sprite_eyes(face, activity, mood, pose);
+    draw_sprite_brows(face, activity, mood);
+    draw_sprite_mouth(face, activity, mood, playback_level);
+    draw_sprite_accents(face, activity, seconds);
+}
+#endif
 
 static void render_face(face_t *face, uint32_t now)
 {
@@ -978,6 +1242,10 @@ static void render_face(face_t *face, uint32_t now)
            * sizeof(*face->canvas_buffer));
 
     const float seconds = (float)now / 1000.0f;
+#if FACE_USE_SPRITES
+    draw_sprite_face(face, activity, mood, &face->pose, playback_level,
+                     seconds);
+#else
     const float breath = sinf(seconds * (2.0f * PI_F / 6.8f))
         * (0.9f + face->pose.energy * 2.0f);
     draw_brow(face, 132.0f, face->pose.left_brow_lift,
@@ -999,6 +1267,7 @@ static void render_face(face_t *face, uint32_t now)
     if (activity == FACE_ACTIVITY_SLEEPING) {
         draw_sleep_symbols(face, seconds);
     }
+#endif
 
     lv_draw_buf_flush_cache(lv_canvas_get_draw_buf(face->canvas), NULL);
     lv_obj_invalidate(face->canvas);
