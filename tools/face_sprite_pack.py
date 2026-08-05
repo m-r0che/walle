@@ -65,14 +65,28 @@ def main() -> None:
     for index, logical in enumerate(SELECTED):
         part = names[logical]
         source = Image.open(parts_dir / f"{part}.png").convert("RGBA")
+        if logical == "head_blank":
+            pixels = source.load()
+            center_x = 168
+            center_y = 173
+            radius_x = 18
+            radius_y = 18
+            limit = radius_x * radius_x * radius_y * radius_y
+            for y in range(center_y - radius_y, center_y + radius_y + 1):
+                for x in range(center_x - radius_x, center_x + radius_x + 1):
+                    if 0 <= x < source.width and 0 <= y < source.height:
+                        dx = x - center_x
+                        dy = y - center_y
+                        if dx * dx * radius_y * radius_y + dy * dy * radius_x * radius_x <= limit:
+                            pixels[x, y] = pixels[x, max(0, y - 32)]
         scale_x = SCALE
         scale_y = SCALE
         if logical.startswith("eye_"):
-            scale_x = 1.16
-            scale_y = 0.98
+            scale_x = 1.24
+            scale_y = 1.04
         elif logical.startswith("pupil_"):
-            scale_x = 0.92
-            scale_y = 0.95
+            scale_x = 0.98
+            scale_y = 1.00
         elif logical.startswith("mouth_"):
             scale_x = 0.58
             scale_y = 0.58
