@@ -6,10 +6,10 @@ from pathlib import Path
 
 from PIL import Image
 
-SCALE = 0.89
+SCALE = 1.05
 PAD = 3
-OFFSET_X = 26
-OFFSET_Y = 23
+OFFSET_X = -5
+OFFSET_Y = -9
 
 SELECTED = [
     "head_blank", "antenna", "ear_left", "ear_right",
@@ -70,20 +70,25 @@ def wrap(values, width=12):
     return "\n".join(out)
 
 
-def remove_baked_nose(source: Image.Image) -> None:
+def remove_baked_orange_from_head(source: Image.Image) -> None:
     pixels = source.load()
-    center_x = 168
-    center_y = 173
-    radius_x = 18
-    radius_y = 18
+    nose_x = 168
+    nose_y = 173
+    radius_x = 22
+    radius_y = 22
     limit = radius_x * radius_x * radius_y * radius_y
-    for y in range(center_y - radius_y, center_y + radius_y + 1):
-        for x in range(center_x - radius_x, center_x + radius_x + 1):
+    for y in range(nose_y - radius_y, nose_y + radius_y + 1):
+        for x in range(nose_x - radius_x, nose_x + radius_x + 1):
             if 0 <= x < source.width and 0 <= y < source.height:
-                dx = x - center_x
-                dy = y - center_y
+                dx = x - nose_x
+                dy = y - nose_y
                 if dx * dx * radius_y * radius_y + dy * dy * radius_x * radius_x <= limit:
-                    pixels[x, y] = pixels[x, max(0, y - 32)]
+                    pixels[x, y] = pixels[x, max(0, y - 36)]
+    for y in range(source.height):
+        for x in range(source.width):
+            r, g, b, a = pixels[x, y]
+            if a > 0 and r > 160 and 45 < g < 190 and b < 100 and r - g > 45:
+                pixels[x, y] = (0, 0, 0, 0)
 
 
 def scale_for(logical: str) -> tuple[float, float]:
@@ -93,7 +98,7 @@ def scale_for(logical: str) -> tuple[float, float]:
     }:
         return 0.62, 0.62
     if logical.startswith("eye_"):
-        return 0.88, 0.72
+        return 0.98, 0.80
     if logical.startswith("pupil_"):
         if logical == "pupil_small":
             return 0.92, 0.92
@@ -104,7 +109,7 @@ def scale_for(logical: str) -> tuple[float, float]:
         if logical == "pupil_heart":
             return 0.58, 0.58
     if logical.startswith("eye_"):
-        return 1.24, 1.04
+        return 1.34, 1.12
     if logical.startswith("mouth_"):
         return 0.58, 0.58
     return SCALE, SCALE
@@ -142,7 +147,7 @@ def main() -> None:
             part_manifest = manifest[part]
             use_sheet_origin = True
             if logical == "head_blank":
-                remove_baked_nose(source)
+                remove_baked_orange_from_head(source)
 
         scale_x, scale_y = scale_for(logical)
         size = (max(1, round(source.width * scale_x)),

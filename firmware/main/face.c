@@ -16,10 +16,10 @@
 
 #define FACE_WIDTH 448
 #define FACE_HEIGHT 368
-#define FACE_CANVAS_WIDTH 344
-#define FACE_CANVAS_HEIGHT 286
-#define FACE_CANVAS_X ((FACE_WIDTH - FACE_CANVAS_WIDTH) / 2)
-#define FACE_CANVAS_Y 39
+#define FACE_CANVAS_WIDTH FACE_WIDTH
+#define FACE_CANVAS_HEIGHT FACE_HEIGHT
+#define FACE_CANVAS_X 0
+#define FACE_CANVAS_Y 0
 // LVGL may request motion faster than the panel's two-transfer visible cadence;
 // completion ownership and display pacing safely coalesce those requests. This
 // keeps the next pose ready promptly without the rejected one-transfer renderer
@@ -664,6 +664,13 @@ static void update_pose(face_t *face, const face_pose_t *target, uint32_t now)
 
 static void update_position_drift(face_t *face, uint32_t now)
 {
+    if (FACE_CANVAS_WIDTH >= FACE_WIDTH || FACE_CANVAS_HEIGHT >= FACE_HEIGHT) {
+        face->drift_x = 0;
+        face->drift_y = 0;
+        face->next_drift_ms = now + FACE_DRIFT_PERIOD_MS;
+        lv_obj_set_pos(face->canvas, FACE_CANVAS_X, FACE_CANVAS_Y);
+        return;
+    }
     static const int8_t positions[][2] = {
         {0, 0}, {2, -2}, {-2, -1}, {-2, 2}, {2, 2}, {1, -1}, {-1, 1},
     };
@@ -1010,7 +1017,6 @@ static void draw_sprite_head(face_t *face)
     blit_sprite_sheet_origin(face, FACE_SPRITE_HEAD_BLANK);
     blit_sprite_sheet_origin(face, FACE_SPRITE_EAR_LEFT);
     blit_sprite_sheet_origin(face, FACE_SPRITE_EAR_RIGHT);
-    blit_sprite_sheet_origin(face, FACE_SPRITE_ANTENNA);
 }
 
 static void sprite_eye_choice(face_activity_t activity, face_mood_t mood,
@@ -1066,8 +1072,8 @@ static void draw_sprite_eyes(face_t *face, face_activity_t activity,
     face_sprite_id_t right;
     bool closed;
     sprite_eye_choice(activity, mood, pose, &left, &right, &closed);
-    blit_sprite_center(face, left, 155, 199, 0, 0);
-    blit_sprite_center(face, right, 291, 199, 0, 0);
+    blit_sprite_center(face, left, 147, 190, 0, 0);
+    blit_sprite_center(face, right, 307, 190, 0, 0);
     if (closed) {
         return;
     }
@@ -1084,8 +1090,8 @@ static void draw_sprite_eyes(face_t *face, face_activity_t activity,
     }
     const int32_t gaze_x = (int32_t)(clampf(pose->gaze_x, -1.0f, 1.0f) * 12.0f);
     const int32_t gaze_y = (int32_t)(clampf(pose->gaze_y, -1.0f, 1.0f) * 8.0f);
-    blit_sprite_center(face, pupil, 155, 199, gaze_x, gaze_y + 5);
-    blit_sprite_center(face, pupil, 291, 199, gaze_x, gaze_y + 5);
+    blit_sprite_center(face, pupil, 147, 190, gaze_x, gaze_y + 5);
+    blit_sprite_center(face, pupil, 307, 190, gaze_x, gaze_y + 5);
 }
 
 static void draw_sprite_brows(face_t *face, face_activity_t activity,
@@ -1110,8 +1116,8 @@ static void draw_sprite_brows(face_t *face, face_activity_t activity,
         left = FACE_SPRITE_BROW_RAISED_LEFT;
         right = FACE_SPRITE_BROW_SOFT_RIGHT;
     }
-    blit_sprite_center(face, left, 155, 152, 0, 0);
-    blit_sprite_center(face, right, 291, 152, 0, 0);
+    blit_sprite_center(face, left, 147, 143, 0, 0);
+    blit_sprite_center(face, right, 307, 143, 0, 0);
 }
 
 static face_sprite_id_t sprite_mouth_choice(face_activity_t activity,
@@ -1157,22 +1163,22 @@ static void draw_sprite_mouth(face_t *face, face_activity_t activity,
 {
     const face_sprite_id_t mouth = sprite_mouth_choice(
         activity, mood, playback_level);
-    int32_t y = 265;
+    int32_t y = 272;
     if (mouth == FACE_SPRITE_MOUTH_OPEN_SMALL) {
-        y = 266;
+        y = 273;
     } else if (mouth == FACE_SPRITE_MOUTH_TALK_OVAL) {
-        y = 272;
+        y = 280;
     } else if (mouth == FACE_SPRITE_MOUTH_TALK_WIDE) {
-        y = 277;
+        y = 286;
     } else if (mouth == FACE_SPRITE_MOUTH_SMILE_WIDE) {
-        y = 266;
+        y = 273;
     } else if (mouth == FACE_SPRITE_MOUTH_SURPRISED_O) {
-        y = 266;
+        y = 273;
     } else if (mouth == FACE_SPRITE_MOUTH_SLEEPY_POUT
                || mouth == FACE_SPRITE_MOUTH_FROWN_FLAT
                || mouth == FACE_SPRITE_MOUTH_SAD_SOFT
                || mouth == FACE_SPRITE_MOUTH_SMIRK) {
-        y = 268;
+        y = 276;
     }
     blit_sprite_center(face, mouth, 224, y, 0, 0);
 }
@@ -1199,8 +1205,8 @@ static void draw_filled_ellipse(face_t *face, int32_t center_x,
 
 static void draw_sprite_nose(face_t *face)
 {
-    draw_filled_ellipse(face, 224, 239, 12, 12, 0x0000);
-    draw_filled_ellipse(face, 224, 239, 8, 8, 0xfbe3);
+    draw_filled_ellipse(face, 224, 231, 12, 12, 0x0000);
+    draw_filled_ellipse(face, 224, 231, 8, 8, 0xfbe3);
 }
 
 static void draw_blush_tick(face_t *face, int32_t x, int32_t y)
@@ -1223,12 +1229,12 @@ static void draw_blush_tick(face_t *face, int32_t x, int32_t y)
 
 static void draw_sprite_blush(face_t *face)
 {
-    draw_blush_tick(face, 108, 255);
-    draw_blush_tick(face, 120, 255);
-    draw_blush_tick(face, 132, 255);
-    draw_blush_tick(face, 307, 255);
-    draw_blush_tick(face, 319, 255);
-    draw_blush_tick(face, 331, 255);
+    draw_blush_tick(face, 92, 247);
+    draw_blush_tick(face, 106, 247);
+    draw_blush_tick(face, 120, 247);
+    draw_blush_tick(face, 318, 247);
+    draw_blush_tick(face, 332, 247);
+    draw_blush_tick(face, 346, 247);
 }
 
 static void draw_sprite_accents(face_t *face, face_activity_t activity,
@@ -1237,12 +1243,12 @@ static void draw_sprite_accents(face_t *face, face_activity_t activity,
     if (activity == FACE_ACTIVITY_SLEEPING) {
         const int32_t drift = (int32_t)fmodf(seconds * 7.0f, 28.0f);
         blit_sprite_center(face, FACE_SPRITE_ACCENT_Z_LARGE,
-                           61, 72 - drift, 0, 0);
+                           62, 62 - drift, 0, 0);
         blit_sprite_center(face, FACE_SPRITE_ACCENT_Z_SMALL,
-                           105, 51 - drift / 2, 0, 0);
+                           113, 39 - drift / 2, 0, 0);
     } else if (activity == FACE_ACTIVITY_LISTENING) {
         blit_sprite_center(face, FACE_SPRITE_ACCENT_SOUND_WAVE_SMALL,
-                           394, 199, 0, 0);
+                           416, 190, 0, 0);
     }
 }
 

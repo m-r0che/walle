@@ -9,18 +9,17 @@ from PIL import Image
 
 FACE_W = 448
 FACE_H = 368
-SCALE = 0.89
+SCALE = 1.05
 PAD = 3
-OFFSET_X = 26
-OFFSET_Y = 23
-FEATURE_RAISE = 14
+OFFSET_X = -5
+OFFSET_Y = -9
 
-LEFT_EYE = (155, 213 - FEATURE_RAISE)
-RIGHT_EYE = (291, 213 - FEATURE_RAISE)
-LEFT_BROW = (155, 166 - FEATURE_RAISE)
-RIGHT_BROW = (291, 166 - FEATURE_RAISE)
+LEFT_EYE = (147, 190)
+RIGHT_EYE = (307, 190)
+LEFT_BROW = (147, 143)
+RIGHT_BROW = (307, 143)
 MOUTH_X = 224
-NOSE_CENTER = (224, 253 - FEATURE_RAISE)
+NOSE_CENTER = (224, 231)
 
 EYE_OVERRIDES = {
     "eye_open_left": "eye_open_left",
@@ -53,20 +52,25 @@ EYE_NAMES = json.loads((ROOT / "design" / "eye-parts-names.json").read_text())["
 MANIFEST = {item["name"]: item for item in json.loads((PARTS_DIR / "manifest.json").read_text())}
 
 
-def remove_baked_nose(im: Image.Image) -> None:
+def remove_baked_orange_from_head(im: Image.Image) -> None:
     px = im.load()
-    center_x = 168
-    center_y = 173
-    radius_x = 18
-    radius_y = 18
+    nose_x = 168
+    nose_y = 173
+    radius_x = 22
+    radius_y = 22
     limit = radius_x * radius_x * radius_y * radius_y
-    for y in range(center_y - radius_y, center_y + radius_y + 1):
-        for x in range(center_x - radius_x, center_x + radius_x + 1):
+    for y in range(nose_y - radius_y, nose_y + radius_y + 1):
+        for x in range(nose_x - radius_x, nose_x + radius_x + 1):
             if 0 <= x < im.width and 0 <= y < im.height:
-                dx = x - center_x
-                dy = y - center_y
+                dx = x - nose_x
+                dy = y - nose_y
                 if dx * dx * radius_y * radius_y + dy * dy * radius_x * radius_x <= limit:
-                    px[x, y] = px[x, max(0, y - 32)]
+                    px[x, y] = px[x, max(0, y - 36)]
+    for y in range(im.height):
+        for x in range(im.width):
+            r, g, b, a = px[x, y]
+            if a > 0 and r > 160 and 45 < g < 190 and b < 100 and r - g > 45:
+                px[x, y] = (0, 0, 0, 0)
 
 
 def scale_for(logical_name: str) -> tuple[float, float]:
@@ -76,7 +80,7 @@ def scale_for(logical_name: str) -> tuple[float, float]:
     }:
         return 0.62, 0.62
     if logical_name.startswith("eye_"):
-        return 0.88, 0.72
+        return 0.98, 0.80
     if logical_name.startswith("pupil_"):
         if logical_name == "pupil_small":
             return 0.92, 0.92
@@ -86,8 +90,6 @@ def scale_for(logical_name: str) -> tuple[float, float]:
             return 0.58, 0.58
         if logical_name == "pupil_heart":
             return 0.58, 0.58
-    if logical_name.startswith("eye_"):
-        return 1.24, 1.04
     if logical_name.startswith("mouth_"):
         return 0.58, 0.58
     return SCALE, SCALE
@@ -101,7 +103,7 @@ def part_image(logical_name: str) -> Image.Image:
         part_name = NAMES[logical_name]
         im = Image.open(PARTS_DIR / f"{part_name}.png").convert("RGBA")
         if logical_name == "head_blank":
-            remove_baked_nose(im)
+            remove_baked_orange_from_head(im)
     scale_x, scale_y = scale_for(logical_name)
     size = (max(1, round(im.width * scale_x)), max(1, round(im.height * scale_y)))
     return im.resize(size, Image.Resampling.LANCZOS)
@@ -119,7 +121,7 @@ def paste(canvas: Image.Image, logical_name: str, x: int, y: int) -> None:
 
 
 def paste_head(canvas: Image.Image) -> None:
-    for name in ("head_blank", "antenna", "ear_left", "ear_right"):
+    for name in ("head_blank", "ear_left", "ear_right"):
         paste(canvas, name, *part_sheet_origin(name))
 
 
@@ -173,14 +175,14 @@ def paste_nose(canvas: Image.Image) -> None:
 
 
 def paste_blush(canvas: Image.Image) -> None:
-    for x in (108, 120, 132):
-        draw_blush_tick(canvas, x, 269 - FEATURE_RAISE)
-    for x in (307, 319, 331):
-        draw_blush_tick(canvas, x, 269 - FEATURE_RAISE)
+    for x in (92, 106, 120):
+        draw_blush_tick(canvas, x, 247)
+    for x in (318, 332, 346):
+        draw_blush_tick(canvas, x, 247)
 
 
 def paste_sound(canvas: Image.Image) -> None:
-    paste_center(canvas, "accent_sound_wave_small", (394, 213 - FEATURE_RAISE))
+    paste_center(canvas, "accent_sound_wave_small", (416, 190))
 
 
 def compose(pose: str) -> Image.Image:
@@ -191,33 +193,33 @@ def compose(pose: str) -> Image.Image:
 
     if pose == "warm":
         paste_eye_pair(canvas, "eye_open_left", "eye_open_right", "pupil_small")
-        paste_center(canvas, "mouth_smile_gentle", (MOUTH_X, 279 - FEATURE_RAISE))
+        paste_center(canvas, "mouth_smile_gentle", (MOUTH_X, 272))
     elif pose == "happy":
         paste_eye_pair(canvas, "eye_happy_closed_left", "eye_happy_closed_right", None)
-        paste_center(canvas, "mouth_smile_gentle", (MOUTH_X, 279 - FEATURE_RAISE))
+        paste_center(canvas, "mouth_smile_gentle", (MOUTH_X, 272))
     elif pose == "curious":
         paste_eye_pair(canvas, "eye_open_left", "eye_open_right", "pupil_small", gaze=(12, -2))
         paste_brows(canvas, "brow_raised_left", "brow_raised_right")
-        paste_center(canvas, "mouth_surprised_o", (MOUTH_X, 280 - FEATURE_RAISE))
+        paste_center(canvas, "mouth_surprised_o", (MOUTH_X, 273))
     elif pose == "listening":
         paste_eye_pair(canvas, "eye_open_left", "eye_open_right", "pupil_medium")
-        paste_center(canvas, "mouth_smile_gentle", (MOUTH_X, 279 - FEATURE_RAISE))
+        paste_center(canvas, "mouth_smile_gentle", (MOUTH_X, 272))
         paste_sound(canvas)
     elif pose == "speaking":
         paste_eye_pair(canvas, "eye_open_left", "eye_open_right", "pupil_small")
-        paste_center(canvas, "mouth_talk_wide", (MOUTH_X, 291 - FEATURE_RAISE))
+        paste_center(canvas, "mouth_talk_wide", (MOUTH_X, 286))
     elif pose == "thinking":
         paste_eye_pair(canvas, "eye_open_left", "eye_open_right", "pupil_small", gaze=(10, -3))
-        paste_center(canvas, "mouth_smile_gentle", (MOUTH_X, 279 - FEATURE_RAISE))
+        paste_center(canvas, "mouth_smile_gentle", (MOUTH_X, 272))
     elif pose == "concerned":
         paste_eye_pair(canvas, "eye_worried_left", "eye_worried_right", "pupil_small")
         paste_brows(canvas, "brow_raised_left", "brow_raised_right")
-        paste_center(canvas, "mouth_sad_soft", (MOUTH_X, 282 - FEATURE_RAISE))
+        paste_center(canvas, "mouth_sad_soft", (MOUTH_X, 276))
     elif pose == "sleeping":
         paste_eye_pair(canvas, "eye_sleep_closed_left", "eye_sleep_closed_right", None)
-        paste_center(canvas, "mouth_sleepy_pout", (MOUTH_X, 282 - FEATURE_RAISE))
-        paste_center(canvas, "accent_z_large", (61, 86 - FEATURE_RAISE))
-        paste_center(canvas, "accent_z_small", (105, 65 - FEATURE_RAISE))
+        paste_center(canvas, "mouth_sleepy_pout", (MOUTH_X, 276))
+        paste_center(canvas, "accent_z_large", (62, 62))
+        paste_center(canvas, "accent_z_small", (113, 39))
     else:
         raise SystemExit(f"unknown pose: {pose}")
     return canvas
