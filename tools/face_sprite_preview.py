@@ -12,14 +12,14 @@ FACE_H = 368
 SCALE = 1.05
 PAD = 3
 OFFSET_X = -5
-OFFSET_Y = -9
+OFFSET_Y = -1
 
-LEFT_EYE = (147, 190)
-RIGHT_EYE = (307, 190)
-LEFT_BROW = (147, 143)
-RIGHT_BROW = (307, 143)
+LEFT_EYE = (147, 198)
+RIGHT_EYE = (307, 198)
+LEFT_BROW = (147, 151)
+RIGHT_BROW = (307, 151)
 MOUTH_X = 224
-NOSE_CENTER = (224, 231)
+NOSE_CENTER = (224, 239)
 
 EYE_OVERRIDES = {
     "eye_open_left": "eye_open_left",
@@ -121,7 +121,7 @@ def paste(canvas: Image.Image, logical_name: str, x: int, y: int) -> None:
 
 
 def paste_head(canvas: Image.Image) -> None:
-    for name in ("head_blank", "ear_left", "ear_right"):
+    for name in ("head_blank", "ear_left", "ear_right", "antenna"):
         paste(canvas, name, *part_sheet_origin(name))
 
 
@@ -176,13 +176,13 @@ def paste_nose(canvas: Image.Image) -> None:
 
 def paste_blush(canvas: Image.Image) -> None:
     for x in (92, 106, 120):
-        draw_blush_tick(canvas, x, 247)
+        draw_blush_tick(canvas, x, 255)
     for x in (318, 332, 346):
-        draw_blush_tick(canvas, x, 247)
+        draw_blush_tick(canvas, x, 255)
 
 
 def paste_sound(canvas: Image.Image) -> None:
-    paste_center(canvas, "accent_sound_wave_small", (416, 190))
+    paste_center(canvas, "accent_sound_wave_small", (416, 198))
 
 
 def compose(pose: str) -> Image.Image:
@@ -193,31 +193,31 @@ def compose(pose: str) -> Image.Image:
 
     if pose == "warm":
         paste_eye_pair(canvas, "eye_open_left", "eye_open_right", "pupil_small")
-        paste_center(canvas, "mouth_smile_gentle", (MOUTH_X, 272))
+        paste_center(canvas, "mouth_smile_gentle", (MOUTH_X, 280))
     elif pose == "happy":
         paste_eye_pair(canvas, "eye_happy_closed_left", "eye_happy_closed_right", None)
-        paste_center(canvas, "mouth_smile_gentle", (MOUTH_X, 272))
+        paste_center(canvas, "mouth_smile_gentle", (MOUTH_X, 280))
     elif pose == "curious":
         paste_eye_pair(canvas, "eye_open_left", "eye_open_right", "pupil_small", gaze=(12, -2))
         paste_brows(canvas, "brow_raised_left", "brow_raised_right")
-        paste_center(canvas, "mouth_surprised_o", (MOUTH_X, 273))
+        paste_center(canvas, "mouth_surprised_o", (MOUTH_X, 281))
     elif pose == "listening":
         paste_eye_pair(canvas, "eye_open_left", "eye_open_right", "pupil_medium")
-        paste_center(canvas, "mouth_smile_gentle", (MOUTH_X, 272))
+        paste_center(canvas, "mouth_smile_gentle", (MOUTH_X, 280))
         paste_sound(canvas)
     elif pose == "speaking":
         paste_eye_pair(canvas, "eye_open_left", "eye_open_right", "pupil_small")
-        paste_center(canvas, "mouth_talk_wide", (MOUTH_X, 286))
+        paste_center(canvas, "mouth_talk_wide", (MOUTH_X, 294))
     elif pose == "thinking":
         paste_eye_pair(canvas, "eye_open_left", "eye_open_right", "pupil_small", gaze=(10, -3))
-        paste_center(canvas, "mouth_smile_gentle", (MOUTH_X, 272))
+        paste_center(canvas, "mouth_smile_gentle", (MOUTH_X, 280))
     elif pose == "concerned":
         paste_eye_pair(canvas, "eye_worried_left", "eye_worried_right", "pupil_small")
         paste_brows(canvas, "brow_raised_left", "brow_raised_right")
-        paste_center(canvas, "mouth_sad_soft", (MOUTH_X, 276))
+        paste_center(canvas, "mouth_sad_soft", (MOUTH_X, 284))
     elif pose == "sleeping":
         paste_eye_pair(canvas, "eye_sleep_closed_left", "eye_sleep_closed_right", None)
-        paste_center(canvas, "mouth_sleepy_pout", (MOUTH_X, 276))
+        paste_center(canvas, "mouth_sleepy_pout", (MOUTH_X, 284))
         paste_center(canvas, "accent_z_large", (62, 62))
         paste_center(canvas, "accent_z_small", (113, 39))
     else:

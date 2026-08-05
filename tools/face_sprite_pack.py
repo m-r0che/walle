@@ -9,7 +9,7 @@ from PIL import Image
 SCALE = 1.05
 PAD = 3
 OFFSET_X = -5
-OFFSET_Y = -9
+OFFSET_Y = -1
 
 SELECTED = [
     "head_blank", "antenna", "ear_left", "ear_right",

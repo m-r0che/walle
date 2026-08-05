@@ -18,9 +18,6 @@
 static const char *TAG = "walle";
 
 #define DEFAULT_OUTPUT_VOLUME 100
-#define MIN_OUTPUT_VOLUME 10
-#define MAX_OUTPUT_VOLUME 100
-#define VOLUME_STEP 10
 #define SETTINGS_NAMESPACE "walle"
 #define VOLUME_KEY "volume"
 #define SLEEP_AFTER_STILL_MS 60000
@@ -30,10 +27,6 @@ typedef struct {
     offline_echo_t *echo;
     network_relay_t *network;
     motion_sensor_t *motion;
-    lv_obj_t *volume_label;
-    lv_obj_t *volume_down_button;
-    lv_obj_t *volume_up_button;
-    lv_timer_t *volume_hide_timer;
     uint8_t output_volume;
     nvs_handle_t settings;
     bool settings_open;
@@ -53,129 +46,12 @@ static uint8_t load_output_volume(app_context_t *context)
     }
     context->settings_open = true;
 
-    // The touch volume controls are intentionally compact and are currently
-    // hard to use on-device, so this build boots loudly and persists that
-    // choice instead of honoring an older quiet NVS value.
-    (void)nvs_set_u8(context->settings, VOLUME_KEY, MAX_OUTPUT_VOLUME);
+    // Volume is intentionally fixed at maximum for this prototype. Persist it
+    // to clobber older quiet NVS values, but do not create on-screen controls:
+    // the whole face is the single hold-to-speak interaction surface.
+    (void)nvs_set_u8(context->settings, VOLUME_KEY, DEFAULT_OUTPUT_VOLUME);
     (void)nvs_commit(context->settings);
-    return MAX_OUTPUT_VOLUME;
-}
-
-static void persist_output_volume(app_context_t *context)
-{
-    if (!context->settings_open) {
-        return;
-    }
-    esp_err_t error = nvs_set_u8(context->settings, VOLUME_KEY,
-                                 context->output_volume);
-    if (error == ESP_OK) {
-        error = nvs_commit(context->settings);
-    }
-    if (error != ESP_OK) {
-        ESP_LOGW(TAG, "Volume setting was not saved: %s",
-                 esp_err_to_name(error));
-    }
-}
-
-static void update_volume_label(app_context_t *context)
-{
-    if (context->volume_label != NULL) {
-        lv_label_set_text_fmt(context->volume_label, "VOL %u",
-                              (unsigned)context->output_volume);
-    }
-}
-
-static void hide_volume_label(lv_timer_t *timer)
-{
-    app_context_t *context = lv_timer_get_user_data(timer);
-    if (context->volume_label != NULL) {
-        lv_obj_add_flag(context->volume_label, LV_OBJ_FLAG_HIDDEN);
-    }
-    lv_timer_pause(timer);
-}
-
-static void handle_volume_button(lv_event_t *event)
-{
-    if (lv_event_get_code(event) != LV_EVENT_PRESSED) {
-        return;
-    }
-    app_context_t *context = lv_event_get_user_data(event);
-    const bool increase = lv_event_get_target(event)
-        == context->volume_up_button;
-    uint8_t next_volume = context->output_volume;
-    if (increase && next_volume < MAX_OUTPUT_VOLUME) {
-        next_volume += VOLUME_STEP;
-    } else if (!increase && next_volume > MIN_OUTPUT_VOLUME) {
-        next_volume -= VOLUME_STEP;
-    }
-    if (next_volume == context->output_volume) {
-        return;
-    }
-
-    const esp_err_t error = offline_echo_set_output_volume(
-        context->echo, next_volume);
-    if (error != ESP_OK) {
-        ESP_LOGE(TAG, "Volume change failed: %s", esp_err_to_name(error));
-        return;
-    }
-    context->output_volume = next_volume;
-    update_volume_label(context);
-    lv_obj_clear_flag(context->volume_label, LV_OBJ_FLAG_HIDDEN);
-    if (context->volume_hide_timer != NULL) {
-        lv_timer_reset(context->volume_hide_timer);
-        lv_timer_resume(context->volume_hide_timer);
-    }
-    persist_output_volume(context);
-    ESP_LOGI(TAG, "Volume selected=%u%%", (unsigned)next_volume);
-}
-
-static lv_obj_t *create_control_button(lv_obj_t *parent, const char *text,
-                                       int32_t x, int32_t width,
-                                       lv_event_cb_t callback,
-                                       app_context_t *context)
-{
-    lv_obj_t *button = lv_button_create(parent);
-    lv_obj_remove_style_all(button);
-    lv_obj_set_size(button, width, 30);
-    lv_obj_set_pos(button, x, 326);
-    lv_obj_set_ext_click_area(button, 22);
-    lv_obj_set_style_radius(button, 15, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(button, LV_OPA_TRANSP, LV_PART_MAIN);
-    lv_obj_set_style_border_width(button, 0, LV_PART_MAIN);
-    lv_obj_set_style_shadow_width(button, 0, LV_PART_MAIN);
-    lv_obj_add_event_cb(button, callback, LV_EVENT_PRESSED, context);
-
-    lv_obj_t *label = lv_label_create(button);
-    lv_label_set_text(label, text);
-    lv_obj_set_style_text_color(label, lv_color_hex(0xa8ffff), LV_PART_MAIN);
-    lv_obj_center(label);
-    return button;
-}
-
-static bool start_volume_controls(app_context_t *context)
-{
-    if (!bsp_display_lock(1000)) {
-        return false;
-    }
-    lv_obj_t *screen = lv_screen_active();
-    context->volume_down_button = create_control_button(
-        screen, "-", 20, 48, handle_volume_button, context);
-    context->volume_up_button = create_control_button(
-        screen, "+", 380, 48, handle_volume_button, context);
-    context->volume_label = lv_label_create(screen);
-    lv_obj_set_width(context->volume_label, 96);
-    lv_obj_set_pos(context->volume_label, 176, 332);
-    lv_obj_set_style_text_align(context->volume_label, LV_TEXT_ALIGN_CENTER,
-                                LV_PART_MAIN);
-    lv_obj_set_style_text_color(context->volume_label,
-                                lv_color_hex(0x68d9e3), LV_PART_MAIN);
-    update_volume_label(context);
-    lv_obj_add_flag(context->volume_label, LV_OBJ_FLAG_HIDDEN);
-    context->volume_hide_timer = lv_timer_create(
-        hide_volume_label, 1800, context);
-    lv_timer_pause(context->volume_hide_timer);
-    bsp_display_unlock();
-    return true;
+    return DEFAULT_OUTPUT_VOLUME;
 }
 
 static void handle_face_input(face_input_event_t event, void *opaque_context)
@@ -380,13 +256,10 @@ void app_main(void)
         context.output_volume = DEFAULT_OUTPUT_VOLUME;
     }
     face_set_input_callback(context.face, handle_face_input, &context);
-    if (!start_volume_controls(&context)) {
-        ESP_LOGW(TAG, "Volume controls could not be created");
-    }
     // A second reset/init after the first visible LVGL frame reproducibly
     // blanks the CO5300 on a cold power-on. The initial display_port_start()
     // initialization is authoritative; transfer pacing begins immediately.
-    ESP_LOGI(TAG, "Ready: hold face for PTT; corner buttons set volume (%u%%)",
+    ESP_LOGI(TAG, "Ready: hold face for PTT; output volume fixed at %u%%",
              (unsigned)context.output_volume);
 
     const esp_err_t motion_error = motion_sensor_create(&context.motion);
