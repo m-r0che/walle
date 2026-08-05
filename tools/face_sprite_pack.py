@@ -7,10 +7,10 @@ from pathlib import Path
 
 from PIL import Image
 
-SCALE = 0.80
+SCALE = 0.89
 PAD = 3
-OFFSET_X = 61
-OFFSET_Y = 53
+OFFSET_X = 26
+OFFSET_Y = 23
 
 SELECTED = [
     "head_blank", "antenna", "ear_left", "ear_right",
@@ -67,9 +67,12 @@ def main() -> None:
         source = Image.open(parts_dir / f"{part}.png").convert("RGBA")
         scale_x = SCALE
         scale_y = SCALE
-        if logical.startswith("pupil_"):
-            scale_x = 0.62
-            scale_y = 0.78
+        if logical.startswith("eye_"):
+            scale_x = 1.16
+            scale_y = 0.98
+        elif logical.startswith("pupil_"):
+            scale_x = 0.92
+            scale_y = 0.95
         elif logical.startswith("mouth_"):
             scale_x = 0.58
             scale_y = 0.58

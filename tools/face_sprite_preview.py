@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Preview the component sprite face in Walle's 448x368 logical screen.
 
-The placement anchors are derived from design/assets/face-composite-reference-2026-08-05.png,
-whose warm face cell is 358x274. That reference cell is centered in the
-448x368 device coordinate space before anchors are applied.
+This preview uses the same large, no-clipping placement as firmware: the body
+fills most of the existing 344x286 face canvas, while mouths are independently
+scaled smaller to preserve the composite-reference expression style.
 """
 import json
 import sys
@@ -14,16 +14,16 @@ from PIL import Image
 
 FACE_W = 448
 FACE_H = 368
-SCALE = 0.80
+SCALE = 0.89
 PAD = 3
-OFFSET_X = 61
-OFFSET_Y = 53
+OFFSET_X = 26
+OFFSET_Y = 23
 
-LEFT_EYE = (175, 225)
-RIGHT_EYE = (297, 225)
-LEFT_BROW = (175, 182)
-RIGHT_BROW = (297, 182)
-MOUTH_X = 237
+LEFT_EYE = (155, 213)
+RIGHT_EYE = (291, 213)
+LEFT_BROW = (155, 166)
+RIGHT_BROW = (291, 166)
+MOUTH_X = 224
 
 ROOT = Path(__file__).resolve().parents[1]
 PARTS_DIR = ROOT / "design" / "generated" / "face-parts"
@@ -36,9 +36,12 @@ def part_image(logical_name: str) -> Image.Image:
     im = Image.open(PARTS_DIR / f"{part_name}.png").convert("RGBA")
     scale_x = SCALE
     scale_y = SCALE
-    if logical_name.startswith("pupil_"):
-        scale_x = 0.62
-        scale_y = 0.78
+    if logical_name.startswith("eye_"):
+        scale_x = 1.16
+        scale_y = 0.98
+    elif logical_name.startswith("pupil_"):
+        scale_x = 0.92
+        scale_y = 0.95
     elif logical_name.startswith("mouth_"):
         scale_x = 0.58
         scale_y = 0.58
@@ -96,14 +99,14 @@ def draw_blush_tick(canvas: Image.Image, x: int, y: int) -> None:
 
 
 def paste_blush(canvas: Image.Image) -> None:
-    for x in (135, 146, 157):
-        draw_blush_tick(canvas, x, 276)
-    for x in (316, 327, 338):
-        draw_blush_tick(canvas, x, 276)
+    for x in (108, 120, 132):
+        draw_blush_tick(canvas, x, 269)
+    for x in (307, 319, 331):
+        draw_blush_tick(canvas, x, 269)
 
 
 def paste_sound(canvas: Image.Image) -> None:
-    paste_center(canvas, "accent_sound_wave_small", (388, 225))
+    paste_center(canvas, "accent_sound_wave_small", (394, 213))
 
 
 def compose(pose: str) -> Image.Image:
@@ -113,33 +116,33 @@ def compose(pose: str) -> Image.Image:
 
     if pose == "warm":
         paste_eye_pair(canvas, "eye_open_left", "eye_open_right", "pupil_small")
-        paste_center(canvas, "mouth_smile_gentle", (MOUTH_X, 285))
+        paste_center(canvas, "mouth_smile_gentle", (MOUTH_X, 279))
     elif pose == "happy":
         paste_eye_pair(canvas, "eye_happy_closed_left", "eye_happy_closed_right", None)
-        paste_center(canvas, "mouth_smile_gentle", (MOUTH_X, 285))
+        paste_center(canvas, "mouth_smile_gentle", (MOUTH_X, 279))
     elif pose == "curious":
         paste_eye_pair(canvas, "eye_open_left", "eye_open_right", "pupil_small", gaze=(12, -2))
         paste_brows(canvas, "brow_raised_left", "brow_raised_right")
-        paste_center(canvas, "mouth_surprised_o", (MOUTH_X, 286))
+        paste_center(canvas, "mouth_surprised_o", (MOUTH_X, 280))
     elif pose == "listening":
         paste_eye_pair(canvas, "eye_open_left", "eye_open_right", "pupil_medium")
-        paste_center(canvas, "mouth_smile_gentle", (MOUTH_X, 285))
+        paste_center(canvas, "mouth_smile_gentle", (MOUTH_X, 279))
         paste_sound(canvas)
     elif pose == "speaking":
         paste_eye_pair(canvas, "eye_open_left", "eye_open_right", "pupil_small")
-        paste_center(canvas, "mouth_talk_wide", (MOUTH_X, 296))
+        paste_center(canvas, "mouth_talk_wide", (MOUTH_X, 291))
     elif pose == "thinking":
         paste_eye_pair(canvas, "eye_open_left", "eye_open_right", "pupil_small", gaze=(10, -3))
-        paste_center(canvas, "mouth_smile_gentle", (MOUTH_X, 285))
+        paste_center(canvas, "mouth_smile_gentle", (MOUTH_X, 279))
     elif pose == "concerned":
         paste_eye_pair(canvas, "eye_worried_left", "eye_worried_right", "pupil_small")
         paste_brows(canvas, "brow_raised_left", "brow_raised_right")
-        paste_center(canvas, "mouth_sad_soft", (MOUTH_X, 288))
+        paste_center(canvas, "mouth_sad_soft", (MOUTH_X, 282))
     elif pose == "sleeping":
         paste_eye_pair(canvas, "eye_sleep_closed_left", "eye_sleep_closed_right", None)
-        paste_center(canvas, "mouth_sleepy_pout", (MOUTH_X, 288))
-        paste_center(canvas, "accent_z_large", (83, 104))
-        paste_center(canvas, "accent_z_small", (122, 84))
+        paste_center(canvas, "mouth_sleepy_pout", (MOUTH_X, 282))
+        paste_center(canvas, "accent_z_large", (61, 86))
+        paste_center(canvas, "accent_z_small", (105, 65))
     else:
         raise SystemExit(f"unknown pose: {pose}")
     return canvas

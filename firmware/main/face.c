@@ -1066,8 +1066,8 @@ static void draw_sprite_eyes(face_t *face, face_activity_t activity,
     face_sprite_id_t right;
     bool closed;
     sprite_eye_choice(activity, mood, pose, &left, &right, &closed);
-    blit_sprite_center(face, left, 175, 225, 0, 0);
-    blit_sprite_center(face, right, 297, 225, 0, 0);
+    blit_sprite_center(face, left, 155, 213, 0, 0);
+    blit_sprite_center(face, right, 291, 213, 0, 0);
     if (closed) {
         return;
     }
@@ -1084,8 +1084,8 @@ static void draw_sprite_eyes(face_t *face, face_activity_t activity,
     }
     const int32_t gaze_x = (int32_t)(clampf(pose->gaze_x, -1.0f, 1.0f) * 12.0f);
     const int32_t gaze_y = (int32_t)(clampf(pose->gaze_y, -1.0f, 1.0f) * 8.0f);
-    blit_sprite_center(face, pupil, 175, 225, gaze_x, gaze_y + 5);
-    blit_sprite_center(face, pupil, 297, 225, gaze_x, gaze_y + 5);
+    blit_sprite_center(face, pupil, 155, 213, gaze_x, gaze_y + 5);
+    blit_sprite_center(face, pupil, 291, 213, gaze_x, gaze_y + 5);
 }
 
 static void draw_sprite_brows(face_t *face, face_activity_t activity,
@@ -1110,8 +1110,8 @@ static void draw_sprite_brows(face_t *face, face_activity_t activity,
         left = FACE_SPRITE_BROW_RAISED_LEFT;
         right = FACE_SPRITE_BROW_SOFT_RIGHT;
     }
-    blit_sprite_center(face, left, 175, 182, 0, 0);
-    blit_sprite_center(face, right, 297, 182, 0, 0);
+    blit_sprite_center(face, left, 155, 166, 0, 0);
+    blit_sprite_center(face, right, 291, 166, 0, 0);
 }
 
 static face_sprite_id_t sprite_mouth_choice(face_activity_t activity,
@@ -1157,24 +1157,24 @@ static void draw_sprite_mouth(face_t *face, face_activity_t activity,
 {
     const face_sprite_id_t mouth = sprite_mouth_choice(
         activity, mood, playback_level);
-    int32_t y = 285;
+    int32_t y = 279;
     if (mouth == FACE_SPRITE_MOUTH_OPEN_SMALL) {
-        y = 286;
+        y = 280;
     } else if (mouth == FACE_SPRITE_MOUTH_TALK_OVAL) {
-        y = 292;
+        y = 286;
     } else if (mouth == FACE_SPRITE_MOUTH_TALK_WIDE) {
-        y = 296;
+        y = 291;
     } else if (mouth == FACE_SPRITE_MOUTH_SMILE_WIDE) {
-        y = 286;
+        y = 280;
     } else if (mouth == FACE_SPRITE_MOUTH_SURPRISED_O) {
-        y = 286;
+        y = 280;
     } else if (mouth == FACE_SPRITE_MOUTH_SLEEPY_POUT
                || mouth == FACE_SPRITE_MOUTH_FROWN_FLAT
                || mouth == FACE_SPRITE_MOUTH_SAD_SOFT
                || mouth == FACE_SPRITE_MOUTH_SMIRK) {
-        y = 288;
+        y = 282;
     }
-    blit_sprite_center(face, mouth, 237, y, 0, 0);
+    blit_sprite_center(face, mouth, 224, y, 0, 0);
 }
 
 static void draw_blush_tick(face_t *face, int32_t x, int32_t y)
@@ -1197,12 +1197,12 @@ static void draw_blush_tick(face_t *face, int32_t x, int32_t y)
 
 static void draw_sprite_blush(face_t *face)
 {
-    draw_blush_tick(face, 135, 276);
-    draw_blush_tick(face, 146, 276);
-    draw_blush_tick(face, 157, 276);
-    draw_blush_tick(face, 316, 276);
-    draw_blush_tick(face, 327, 276);
-    draw_blush_tick(face, 338, 276);
+    draw_blush_tick(face, 108, 269);
+    draw_blush_tick(face, 120, 269);
+    draw_blush_tick(face, 132, 269);
+    draw_blush_tick(face, 307, 269);
+    draw_blush_tick(face, 319, 269);
+    draw_blush_tick(face, 331, 269);
 }
 
 static void draw_sprite_accents(face_t *face, face_activity_t activity,
@@ -1211,12 +1211,12 @@ static void draw_sprite_accents(face_t *face, face_activity_t activity,
     if (activity == FACE_ACTIVITY_SLEEPING) {
         const int32_t drift = (int32_t)fmodf(seconds * 7.0f, 28.0f);
         blit_sprite_center(face, FACE_SPRITE_ACCENT_Z_LARGE,
-                           83, 104 - drift, 0, 0);
+                           61, 86 - drift, 0, 0);
         blit_sprite_center(face, FACE_SPRITE_ACCENT_Z_SMALL,
-                           122, 84 - drift / 2, 0, 0);
+                           105, 65 - drift / 2, 0, 0);
     } else if (activity == FACE_ACTIVITY_LISTENING) {
         blit_sprite_center(face, FACE_SPRITE_ACCENT_SOUND_WAVE_SMALL,
-                           388, 225, 0, 0);
+                           394, 213, 0, 0);
     }
 }
 
