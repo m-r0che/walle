@@ -7,12 +7,10 @@ from pathlib import Path
 
 from PIL import Image
 
-SCALE = 0.89
+SCALE = 0.80
 PAD = 3
-FACE_CANVAS_X = 52
-FACE_CANVAS_Y = 39
-OFFSET_X = FACE_CANVAS_X - round(29 * SCALE)
-OFFSET_Y = FACE_CANVAS_Y - round(18 * SCALE)
+OFFSET_X = 61
+OFFSET_Y = 53
 
 SELECTED = [
     "head_blank", "antenna", "ear_left", "ear_right",
@@ -67,8 +65,16 @@ def main() -> None:
     for index, logical in enumerate(SELECTED):
         part = names[logical]
         source = Image.open(parts_dir / f"{part}.png").convert("RGBA")
-        size = (max(1, round(source.width * SCALE)),
-                max(1, round(source.height * SCALE)))
+        scale_x = SCALE
+        scale_y = SCALE
+        if logical.startswith("pupil_"):
+            scale_x = 0.62
+            scale_y = 0.78
+        elif logical.startswith("mouth_"):
+            scale_x = 0.58
+            scale_y = 0.58
+        size = (max(1, round(source.width * scale_x)),
+                max(1, round(source.height * scale_y)))
         im = source.resize(size, Image.Resampling.LANCZOS)
         pixels = []
         alpha = []
