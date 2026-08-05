@@ -17,7 +17,7 @@
 
 static const char *TAG = "walle";
 
-#define DEFAULT_OUTPUT_VOLUME 20
+#define DEFAULT_OUTPUT_VOLUME 100
 #define MIN_OUTPUT_VOLUME 10
 #define MAX_OUTPUT_VOLUME 100
 #define VOLUME_STEP 10
@@ -53,17 +53,12 @@ static uint8_t load_output_volume(app_context_t *context)
     }
     context->settings_open = true;
 
-    uint8_t volume = DEFAULT_OUTPUT_VOLUME;
-    error = nvs_get_u8(context->settings, VOLUME_KEY, &volume);
-    if (error != ESP_OK && error != ESP_ERR_NVS_NOT_FOUND) {
-        ESP_LOGW(TAG, "Volume setting unreadable: %s", esp_err_to_name(error));
-        return DEFAULT_OUTPUT_VOLUME;
-    }
-    if (volume < MIN_OUTPUT_VOLUME || volume > MAX_OUTPUT_VOLUME
-            || volume % VOLUME_STEP != 0) {
-        return DEFAULT_OUTPUT_VOLUME;
-    }
-    return volume;
+    // The touch volume controls are intentionally compact and are currently
+    // hard to use on-device, so this build boots loudly and persists that
+    // choice instead of honoring an older quiet NVS value.
+    (void)nvs_set_u8(context->settings, VOLUME_KEY, MAX_OUTPUT_VOLUME);
+    (void)nvs_commit(context->settings);
+    return MAX_OUTPUT_VOLUME;
 }
 
 static void persist_output_volume(app_context_t *context)
@@ -377,14 +372,12 @@ void app_main(void)
         }
     }
 
-    if (context.output_volume != DEFAULT_OUTPUT_VOLUME) {
-        const esp_err_t volume_error = offline_echo_set_output_volume(
-            context.echo, context.output_volume);
-        if (volume_error != ESP_OK) {
-            ESP_LOGW(TAG, "Saved volume could not be applied: %s",
-                     esp_err_to_name(volume_error));
-            context.output_volume = DEFAULT_OUTPUT_VOLUME;
-        }
+    const esp_err_t volume_error = offline_echo_set_output_volume(
+        context.echo, context.output_volume);
+    if (volume_error != ESP_OK) {
+        ESP_LOGW(TAG, "Startup volume could not be applied: %s",
+                 esp_err_to_name(volume_error));
+        context.output_volume = DEFAULT_OUTPUT_VOLUME;
     }
     face_set_input_callback(context.face, handle_face_input, &context);
     if (!start_volume_controls(&context)) {
