@@ -2,7 +2,6 @@
 """Generate scaled RGB565+A8 firmware sprites from the named face parts."""
 import json
 import re
-import sys
 from pathlib import Path
 
 from PIL import Image
@@ -32,6 +31,29 @@ SELECTED = [
     "accent_z_large", "accent_z_small", "accent_sound_wave_small",
 ]
 
+EYE_OVERRIDES = {
+    "eye_open_left": "eye_open_left",
+    "eye_open_right": "eye_open_right",
+    "eye_half_left": "eye_half_left",
+    "eye_half_right": "eye_half_right",
+    "eye_worried_left": "eye_worried_left",
+    "eye_worried_right": "eye_worried_right",
+    "eye_devious_left": "eye_devious_left",
+    "eye_devious_right": "eye_devious_right",
+    "eye_angry_left": "eye_angry_left",
+    "eye_angry_right": "eye_angry_right",
+    "eye_teary_left": "eye_teary_left",
+    "eye_teary_right": "eye_teary_right",
+    "eye_happy_closed_left": "eye_closed_happy_left",
+    "eye_happy_closed_right": "eye_closed_happy_right",
+    "eye_sleep_closed_left": "eye_closed_sleep_left",
+    "eye_sleep_closed_right": "eye_closed_sleep_right",
+    "pupil_small": "pupil_small",
+    "pupil_medium": "pupil_medium",
+    "pupil_large": "pupil_large",
+    "pupil_heart": "pupil_heart",
+}
+
 
 def c_name(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9_]", "_", name).upper()
@@ -48,14 +70,60 @@ def wrap(values, width=12):
     return "\n".join(out)
 
 
+def remove_baked_nose(source: Image.Image) -> None:
+    pixels = source.load()
+    center_x = 168
+    center_y = 173
+    radius_x = 18
+    radius_y = 18
+    limit = radius_x * radius_x * radius_y * radius_y
+    for y in range(center_y - radius_y, center_y + radius_y + 1):
+        for x in range(center_x - radius_x, center_x + radius_x + 1):
+            if 0 <= x < source.width and 0 <= y < source.height:
+                dx = x - center_x
+                dy = y - center_y
+                if dx * dx * radius_y * radius_y + dy * dy * radius_x * radius_x <= limit:
+                    pixels[x, y] = pixels[x, max(0, y - 32)]
+
+
+def scale_for(logical: str) -> tuple[float, float]:
+    if logical in {
+        "eye_happy_closed_left", "eye_happy_closed_right",
+        "eye_sleep_closed_left", "eye_sleep_closed_right",
+    }:
+        return 0.62, 0.62
+    if logical.startswith("eye_"):
+        return 0.88, 0.72
+    if logical.startswith("pupil_"):
+        if logical == "pupil_small":
+            return 0.92, 0.92
+        if logical == "pupil_medium":
+            return 0.72, 0.72
+        if logical == "pupil_large":
+            return 0.58, 0.58
+        if logical == "pupil_heart":
+            return 0.58, 0.58
+    if logical.startswith("eye_"):
+        return 1.24, 1.04
+    if logical.startswith("mouth_"):
+        return 0.58, 0.58
+    return SCALE, SCALE
+
+
 def main() -> None:
     root = Path(__file__).resolve().parents[1]
     names = json.loads((root / "design" / "face-parts-names.json").read_text())["parts"]
+    eye_names = json.loads((root / "design" / "eye-parts-names.json").read_text())["parts"]
     manifest = {
         item["name"]: item
         for item in json.loads((root / "design" / "generated" / "face-parts" / "manifest.json").read_text())
     }
+    eye_manifest = {
+        item["name"]: item
+        for item in json.loads((root / "design" / "generated" / "eye-parts" / "manifest.json").read_text())
+    }
     parts_dir = root / "design" / "generated" / "face-parts"
+    eye_parts_dir = root / "design" / "generated" / "eye-parts"
     out_h = root / "firmware" / "main" / "face_sprite_assets.h"
     out_c = root / "firmware" / "main" / "face_sprite_assets.c"
 
@@ -63,33 +131,20 @@ def main() -> None:
     c_chunks = []
     table_lines = []
     for index, logical in enumerate(SELECTED):
-        part = names[logical]
-        source = Image.open(parts_dir / f"{part}.png").convert("RGBA")
-        if logical == "head_blank":
-            pixels = source.load()
-            center_x = 168
-            center_y = 173
-            radius_x = 18
-            radius_y = 18
-            limit = radius_x * radius_x * radius_y * radius_y
-            for y in range(center_y - radius_y, center_y + radius_y + 1):
-                for x in range(center_x - radius_x, center_x + radius_x + 1):
-                    if 0 <= x < source.width and 0 <= y < source.height:
-                        dx = x - center_x
-                        dy = y - center_y
-                        if dx * dx * radius_y * radius_y + dy * dy * radius_x * radius_x <= limit:
-                            pixels[x, y] = pixels[x, max(0, y - 32)]
-        scale_x = SCALE
-        scale_y = SCALE
-        if logical.startswith("eye_"):
-            scale_x = 1.24
-            scale_y = 1.04
-        elif logical.startswith("pupil_"):
-            scale_x = 0.98
-            scale_y = 1.00
-        elif logical.startswith("mouth_"):
-            scale_x = 0.58
-            scale_y = 0.58
+        if logical in EYE_OVERRIDES:
+            part = eye_names[EYE_OVERRIDES[logical]]
+            source = Image.open(eye_parts_dir / f"{part}.png").convert("RGBA")
+            part_manifest = eye_manifest[part]
+            use_sheet_origin = False
+        else:
+            part = names[logical]
+            source = Image.open(parts_dir / f"{part}.png").convert("RGBA")
+            part_manifest = manifest[part]
+            use_sheet_origin = True
+            if logical == "head_blank":
+                remove_baked_nose(source)
+
+        scale_x, scale_y = scale_for(logical)
         size = (max(1, round(source.width * scale_x)),
                 max(1, round(source.height * scale_y)))
         im = source.resize(size, Image.Resampling.LANCZOS)
@@ -106,9 +161,13 @@ def main() -> None:
         c_chunks.append(
             f"static const uint16_t {symbol}_pixels[] = {{\n{wrap(pixels)}\n}};\n"
             f"static const uint8_t {symbol}_alpha[] = {{\n{wrap(alpha, 20)}\n}};\n")
-        x0, y0, _x1, _y1 = manifest[part]["box"]
-        origin_x = OFFSET_X + round((x0 - PAD) * SCALE)
-        origin_y = OFFSET_Y + round((y0 - PAD) * SCALE)
+        x0, y0, _x1, _y1 = part_manifest["box"]
+        if use_sheet_origin:
+            origin_x = OFFSET_X + round((x0 - PAD) * SCALE)
+            origin_y = OFFSET_Y + round((y0 - PAD) * SCALE)
+        else:
+            origin_x = 0
+            origin_y = 0
         table_lines.append(
             f"    [{enum_name}] = {{ {im.width}, {im.height}, {origin_x}, {origin_y}, "
             f"{symbol}_pixels, {symbol}_alpha }},")

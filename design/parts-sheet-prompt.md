@@ -53,6 +53,42 @@ consistent scale relative to the base head. Parts must never touch or overlap
 each other.
 ```
 
+## Eyes-only sheet
+
+Focused follow-up when the eye set needs more coverage than the main parts
+sheet. Attach both the 16-tile character sheet and the parts sheet as
+references.
+
+```
+Using the attached robot face art as the exact character design reference,
+create a sprite sheet of ONLY EYES for this robot, laid out on a pure black
+background (#000000) in loose rows with generous empty space around every
+piece so each can be cropped cleanly. Match the reference art's style,
+colours, and line work exactly. Flat solid colours with crisp edges — no
+gradients, glow, or shadows. No text, labels, or watermarks. Draw every eye
+EMPTY: no pupil, so a pupil can be drawn in later. Where a shape is
+asymmetric, draw the left-eye and right-eye versions as a mirrored pair.
+
+Row 1 — open eye pairs: relaxed, wide alert, extra-wide surprised, gently
+narrowed content.
+
+Row 2 — emotional eye pairs: half-lidded sleepy, worried, devious narrowed,
+angry slanted, sad teary.
+
+Row 3 — blink sequence for one open eye, four stages side by side: fully
+open, one-third closed by the upper eyelid, two-thirds closed, fully closed.
+
+Row 4 — closed shapes: happy arc pair, peaceful sleeping pair, one
+squeezed-shut scrunched pair.
+
+Row 5 — pupils at matching scale: the robot's normal pupil in four sizes
+from small to extra large, plus a heart pupil, a flame pupil, and a tiny
+sparkle pupil.
+
+All eyes drawn at a consistent scale relative to each other. Parts must
+never touch or overlap.
+```
+
 ## Notes
 
 - Blush moved off the base head into accents so it can be toggled (e.g. LOVE,

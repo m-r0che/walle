@@ -20,43 +20,89 @@ RIGHT_EYE = (291, 213 - FEATURE_RAISE)
 LEFT_BROW = (155, 166 - FEATURE_RAISE)
 RIGHT_BROW = (291, 166 - FEATURE_RAISE)
 MOUTH_X = 224
-OLD_NOSE_CENTER = (224, 253)
 NOSE_CENTER = (224, 253 - FEATURE_RAISE)
+
+EYE_OVERRIDES = {
+    "eye_open_left": "eye_open_left",
+    "eye_open_right": "eye_open_right",
+    "eye_half_left": "eye_half_left",
+    "eye_half_right": "eye_half_right",
+    "eye_worried_left": "eye_worried_left",
+    "eye_worried_right": "eye_worried_right",
+    "eye_devious_left": "eye_devious_left",
+    "eye_devious_right": "eye_devious_right",
+    "eye_angry_left": "eye_angry_left",
+    "eye_angry_right": "eye_angry_right",
+    "eye_teary_left": "eye_teary_left",
+    "eye_teary_right": "eye_teary_right",
+    "eye_happy_closed_left": "eye_closed_happy_left",
+    "eye_happy_closed_right": "eye_closed_happy_right",
+    "eye_sleep_closed_left": "eye_closed_sleep_left",
+    "eye_sleep_closed_right": "eye_closed_sleep_right",
+    "pupil_small": "pupil_small",
+    "pupil_medium": "pupil_medium",
+    "pupil_large": "pupil_large",
+    "pupil_heart": "pupil_heart",
+}
 
 ROOT = Path(__file__).resolve().parents[1]
 PARTS_DIR = ROOT / "design" / "generated" / "face-parts"
+EYE_PARTS_DIR = ROOT / "design" / "generated" / "eye-parts"
 NAMES = json.loads((ROOT / "design" / "face-parts-names.json").read_text())["parts"]
+EYE_NAMES = json.loads((ROOT / "design" / "eye-parts-names.json").read_text())["parts"]
 MANIFEST = {item["name"]: item for item in json.loads((PARTS_DIR / "manifest.json").read_text())}
 
 
-def part_image(logical_name: str) -> Image.Image:
-    part_name = NAMES[logical_name]
-    im = Image.open(PARTS_DIR / f"{part_name}.png").convert("RGBA")
-    if logical_name == "head_blank":
-        px = im.load()
-        center_x = 168
-        center_y = 173
-        radius_x = 18
-        radius_y = 18
-        limit = radius_x * radius_x * radius_y * radius_y
-        for y in range(center_y - radius_y, center_y + radius_y + 1):
-            for x in range(center_x - radius_x, center_x + radius_x + 1):
-                if 0 <= x < im.width and 0 <= y < im.height:
-                    dx = x - center_x
-                    dy = y - center_y
-                    if dx * dx * radius_y * radius_y + dy * dy * radius_x * radius_x <= limit:
-                        px[x, y] = px[x, max(0, y - 32)]
-    scale_x = SCALE
-    scale_y = SCALE
+def remove_baked_nose(im: Image.Image) -> None:
+    px = im.load()
+    center_x = 168
+    center_y = 173
+    radius_x = 18
+    radius_y = 18
+    limit = radius_x * radius_x * radius_y * radius_y
+    for y in range(center_y - radius_y, center_y + radius_y + 1):
+        for x in range(center_x - radius_x, center_x + radius_x + 1):
+            if 0 <= x < im.width and 0 <= y < im.height:
+                dx = x - center_x
+                dy = y - center_y
+                if dx * dx * radius_y * radius_y + dy * dy * radius_x * radius_x <= limit:
+                    px[x, y] = px[x, max(0, y - 32)]
+
+
+def scale_for(logical_name: str) -> tuple[float, float]:
+    if logical_name in {
+        "eye_happy_closed_left", "eye_happy_closed_right",
+        "eye_sleep_closed_left", "eye_sleep_closed_right",
+    }:
+        return 0.62, 0.62
     if logical_name.startswith("eye_"):
-        scale_x = 1.24
-        scale_y = 1.04
-    elif logical_name.startswith("pupil_"):
-        scale_x = 0.98
-        scale_y = 1.00
-    elif logical_name.startswith("mouth_"):
-        scale_x = 0.58
-        scale_y = 0.58
+        return 0.88, 0.72
+    if logical_name.startswith("pupil_"):
+        if logical_name == "pupil_small":
+            return 0.92, 0.92
+        if logical_name == "pupil_medium":
+            return 0.72, 0.72
+        if logical_name == "pupil_large":
+            return 0.58, 0.58
+        if logical_name == "pupil_heart":
+            return 0.58, 0.58
+    if logical_name.startswith("eye_"):
+        return 1.24, 1.04
+    if logical_name.startswith("mouth_"):
+        return 0.58, 0.58
+    return SCALE, SCALE
+
+
+def part_image(logical_name: str) -> Image.Image:
+    if logical_name in EYE_OVERRIDES:
+        part_name = EYE_NAMES[EYE_OVERRIDES[logical_name]]
+        im = Image.open(EYE_PARTS_DIR / f"{part_name}.png").convert("RGBA")
+    else:
+        part_name = NAMES[logical_name]
+        im = Image.open(PARTS_DIR / f"{part_name}.png").convert("RGBA")
+        if logical_name == "head_blank":
+            remove_baked_nose(im)
+    scale_x, scale_y = scale_for(logical_name)
     size = (max(1, round(im.width * scale_x)), max(1, round(im.height * scale_y)))
     return im.resize(size, Image.Resampling.LANCZOS)
 

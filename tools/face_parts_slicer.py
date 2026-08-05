@@ -6,7 +6,7 @@ dark region reachable from the image border, so black fills inside closed
 outlines (mouth interiors, pupils) are preserved. Emits part_NN.png crops,
 an annotated overview, and a manifest.json with bounding boxes for naming.
 
-Usage: face_parts_slicer.py <sheet.png> <output_dir>
+Usage: face_parts_slicer.py <sheet.png> <output_dir> [dark_sum]
 """
 import json
 import os
@@ -20,7 +20,7 @@ MIN_PIXELS = 150   # drop stray specks smaller than this
 PAD = 3            # transparent padding around each crop
 
 
-def main(sheet_path, out_dir):
+def main(sheet_path, out_dir, dark_sum=DARK_SUM):
     im = Image.open(sheet_path).convert('RGB')
     w, h = im.size
     px = im.load()
@@ -36,7 +36,7 @@ def main(sheet_path, out_dir):
         if x < 0 or y < 0 or x >= w or y >= h or bg[y][x]:
             continue
         r, g, b = px[x, y]
-        if r + g + b > DARK_SUM:
+        if r + g + b > dark_sum:
             continue
         bg[y][x] = True
         q.extend([(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)])
@@ -94,6 +94,6 @@ def main(sheet_path, out_dir):
 
 
 if __name__ == '__main__':
-    if len(sys.argv) != 3:
+    if len(sys.argv) not in (3, 4):
         sys.exit(__doc__)
-    main(sys.argv[1], sys.argv[2])
+    main(sys.argv[1], sys.argv[2], int(sys.argv[3]) if len(sys.argv) == 4 else DARK_SUM)
