@@ -8,9 +8,12 @@
     "INSTALLATION_ID": "home-prototype",
     "AUDIO_PROVIDER": "openai"
   },
-  "worker_loaders": [
-    { "binding": "LOADER" }
-  ],
+  // The Code Mode sandbox needs Dynamic Workers, a Workers Paid feature.
+  // Uncomment after upgrading the account; compose_document reports the
+  // sandbox as unavailable until then.
+  // "worker_loaders": [
+  //   { "binding": "LOADER" }
+  // ],
   "browser": {
     "binding": "BROWSER",
     "remote": true
