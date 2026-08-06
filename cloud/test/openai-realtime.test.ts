@@ -218,4 +218,173 @@ describe("OpenAI Realtime session", () => {
     ]);
     expect(failures).toEqual([]);
   });
+
+  it("advertises the walle tools in the session configuration", async () => {
+    const { transport } = await connect({
+      onAudio: () => undefined,
+      onDone: () => undefined,
+      onFailed: () => undefined,
+    });
+    const update = decodeSent(transport)[0];
+    const session = update.session as Record<string, unknown>;
+    const tools = session.tools as Array<Record<string, unknown>>;
+    expect(session.tool_choice).toBe("auto");
+    expect(tools.map((tool) => tool.name)).toContain("shopping_list_add");
+    expect(tools.map((tool) => tool.name)).toContain("print_commit");
+  });
+
+  it("pauses for tool calls, then finishes after outputs are submitted",
+    async () => {
+      const audio: Uint8Array[] = [];
+      const done: Array<{ turnId: string; samples: number }> = [];
+      const failures: string[] = [];
+      const toolCalls: Array<{ turnId: string; name: string }> = [];
+      const { session, transport } = await connect({
+        onAudio: (_turnId, pcm) => audio.push(pcm),
+        onDone: (turnId, samples) => done.push({ turnId, samples }),
+        onFailed: (_turnId, reason) => failures.push(reason),
+        onToolCalls: (turnId, calls) => {
+          for (const call of calls) {
+            toolCalls.push({ turnId, name: call.name });
+          }
+        },
+      });
+
+      session.beginTurn("turn-5");
+      session.commitTurn("turn-5");
+      transport.message({
+        type: "response.created",
+        response: { id: "resp-5", metadata: { turnId: "turn-5" } },
+      });
+      transport.message({
+        type: "response.done",
+        response: {
+          id: "resp-5",
+          status: "completed",
+          output: [{
+            type: "function_call",
+            call_id: "call-1",
+            name: "shopping_list_add",
+            arguments: "{\"items\":[{\"name\":\"Milk\"}]}",
+          }],
+        },
+      });
+      expect(toolCalls).toEqual([
+        { turnId: "turn-5", name: "shopping_list_add" },
+      ]);
+      expect(done).toEqual([]);
+      expect(failures).toEqual([]);
+
+      session.submitToolOutputs("turn-5", [
+        { callId: "call-1", output: "{\"ok\":true}" },
+      ]);
+      const sent = decodeSent(transport);
+      const itemCreate = sent.find((event) =>
+        event.type === "conversation.item.create");
+      expect((itemCreate?.item as Record<string, unknown>).call_id)
+        .toBe("call-1");
+      expect(sent.filter((event) =>
+        event.type === "response.create").length).toBe(2);
+
+      transport.message({
+        type: "response.created",
+        response: { id: "resp-6", metadata: { turnId: "turn-5" } },
+      });
+      transport.message({
+        type: "response.output_audio.delta",
+        response_id: "resp-6",
+        delta: base64(new Uint8Array(480)),
+      });
+      transport.message({
+        type: "response.done",
+        response: { id: "resp-6", status: "completed" },
+      });
+      expect(done).toEqual([{ turnId: "turn-5", samples: 240 }]);
+      expect(failures).toEqual([]);
+      expect(audio.length).toBe(1);
+    });
+
+  it("rejects tool outputs when no tool call is pending", async () => {
+    const { session, transport } = await connect({
+      onAudio: () => undefined,
+      onDone: () => undefined,
+      onFailed: () => undefined,
+      onToolCalls: () => undefined,
+    });
+    session.beginTurn("turn-6");
+    session.commitTurn("turn-6");
+    transport.message({
+      type: "response.created",
+      response: { id: "resp-7", metadata: { turnId: "turn-6" } },
+    });
+    expect(() => session.submitToolOutputs("turn-6", [
+      { callId: "call-x", output: "{}" },
+    ])).toThrow(/not awaiting/);
+  });
+
+  it("fails the turn when tool rounds exceed the bound", async () => {
+    const failures: string[] = [];
+    const { session, transport } = await connect({
+      onAudio: () => undefined,
+      onDone: () => undefined,
+      onFailed: (_turnId, reason) => failures.push(reason),
+      onToolCalls: () => undefined,
+    });
+    session.beginTurn("turn-7");
+    session.commitTurn("turn-7");
+    for (let round = 0; round < 4 && failures.length === 0; round++) {
+      transport.message({
+        type: "response.created",
+        response: {
+          id: `resp-r${round}`,
+          metadata: { turnId: "turn-7" },
+        },
+      });
+      transport.message({
+        type: "response.done",
+        response: {
+          id: `resp-r${round}`,
+          status: "completed",
+          output: [{
+            type: "function_call",
+            call_id: `call-r${round}`,
+            name: "shopping_list_read",
+            arguments: "",
+          }],
+        },
+      });
+      if (failures.length === 0) {
+        session.submitToolOutputs("turn-7", [
+          { callId: `call-r${round}`, output: "{}" },
+        ]);
+      }
+    }
+    expect(failures).toEqual(["tool_round_limit"]);
+  });
+
+  it("fails closed on out-of-bounds tool call items", async () => {
+    const failures: string[] = [];
+    const { session, transport } = await connect({
+      onAudio: () => undefined,
+      onDone: () => undefined,
+      onFailed: (_turnId, reason) => failures.push(reason),
+      onToolCalls: () => undefined,
+    });
+    session.beginTurn("turn-8");
+    session.commitTurn("turn-8");
+    transport.message({
+      type: "response.created",
+      response: { id: "resp-8", metadata: { turnId: "turn-8" } },
+    });
+    transport.message({
+      type: "response.done",
+      response: {
+        id: "resp-8",
+        status: "completed",
+        output: [{ type: "function_call", call_id: "", name: "x",
+          arguments: "" }],
+      },
+    });
+    expect(failures).toEqual(["tool_call_out_of_bounds"]);
+  });
 });

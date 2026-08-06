@@ -11,6 +11,7 @@
     "deploy:dry": "wrangler deploy --dry-run"
   },
   "dependencies": {
+    "@cloudflare/codemode": "0.5.1",
     "agents": "0.20.1"
   },
   "devDependencies": {

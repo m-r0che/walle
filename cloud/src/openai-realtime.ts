@@ -1,13 +1,21 @@
 import { WALLE_PERSONALITY_INSTRUCTIONS } from "./personality";
+import {
+  MAX_TOOL_ARGUMENT_CHARS,
+  MAX_TOOL_OUTPUT_CHARS,
+  REALTIME_TOOL_DEFINITIONS,
+  type RealtimeToolCall,
+} from "./tools";
 
 export const OPENAI_REALTIME_MODEL = "gpt-realtime-2.1";
 export const OPENAI_REALTIME_VOICE = "ballad";
 export const MAX_OUTPUT_SAMPLES = 24_000 * 300;
+export const MAX_TOOL_ROUNDS_PER_TURN = 3;
 const SAMPLE_RATE = 24_000;
 const MAX_OUTPUT_BYTES = MAX_OUTPUT_SAMPLES * 2;
 const MAX_SERVER_EVENT_CHARS = 512_000;
 const DEVICE_FRAME_BYTES = 960 * 2;
 const SESSION_READY_TIMEOUT_MS = 10_000;
+const MAX_TOOL_CALLS_PER_RESPONSE = 4;
 
 export type RealtimeTransport = {
   send(message: string): void;
@@ -28,6 +36,12 @@ export type OpenAIRealtimeHandlers = {
   onDone(turnId: string, outputSamples: number): void;
   onFailed(turnId: string, reason: string): void;
   onUnavailable?(reason: string): void;
+  /**
+   * The model requested tool execution and the turn is paused until
+   * {@link OpenAIRealtimeSession.submitToolOutputs} is called with one
+   * output per requested call.
+   */
+  onToolCalls?(turnId: string, calls: RealtimeToolCall[]): void;
 };
 
 type ActiveTurn = {
@@ -35,12 +49,41 @@ type ActiveTurn = {
   responseId: string | null;
   outputBytes: number;
   transcriptReported: boolean;
+  toolRounds: number;
+  awaitingToolOutputs: boolean;
 };
 
 function record(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null
     ? value as Record<string, unknown>
     : null;
+}
+
+function extractToolCalls(
+  response: Record<string, unknown>,
+): RealtimeToolCall[] | "invalid" {
+  const output = response.output;
+  if (output === undefined || output === null) return [];
+  if (!Array.isArray(output)) return "invalid";
+  const calls: RealtimeToolCall[] = [];
+  for (const entry of output) {
+    const item = record(entry);
+    if (item?.type !== "function_call") continue;
+    if (typeof item.call_id !== "string" || item.call_id.length === 0
+        || item.call_id.length > 128
+        || typeof item.name !== "string" || item.name.length === 0
+        || item.name.length > 64
+        || typeof item.arguments !== "string"
+        || item.arguments.length > MAX_TOOL_ARGUMENT_CHARS) {
+      return "invalid";
+    }
+    calls.push({
+      callId: item.call_id,
+      name: item.name,
+      argumentsJson: item.arguments,
+    });
+  }
+  return calls.length > MAX_TOOL_CALLS_PER_RESPONSE ? "invalid" : calls;
 }
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -167,6 +210,8 @@ export class OpenAIRealtimeSession {
             voice: OPENAI_REALTIME_VOICE,
           },
         },
+        tools: REALTIME_TOOL_DEFINITIONS,
+        tool_choice: "auto",
       },
     });
 
@@ -199,6 +244,8 @@ export class OpenAIRealtimeSession {
       responseId: null,
       outputBytes: 0,
       transcriptReported: false,
+      toolRounds: 0,
+      awaitingToolOutputs: false,
     };
     this.send({ type: "input_audio_buffer.clear" });
   }
@@ -221,6 +268,42 @@ export class OpenAIRealtimeSession {
       throw new Error("OpenAI turn was already committed");
     }
     this.send({ type: "input_audio_buffer.commit" });
+    this.send({
+      type: "response.create",
+      response: {
+        output_modalities: ["audio"],
+        metadata: { turnId },
+      },
+    });
+  }
+
+  /**
+   * Provide one output per requested tool call and resume the paused turn
+   * with a follow-up response on the same turn metadata.
+   */
+  submitToolOutputs(
+    turnId: string,
+    outputs: Array<{ callId: string; output: string }>,
+  ): void {
+    const turn = this.requireTurn(turnId);
+    if (!turn.awaitingToolOutputs) {
+      throw new Error("OpenAI turn is not awaiting tool outputs");
+    }
+    for (const { callId, output } of outputs) {
+      if (callId.length === 0 || callId.length > 128
+          || output.length > MAX_TOOL_OUTPUT_CHARS) {
+        throw new Error("tool output is out of bounds");
+      }
+      this.send({
+        type: "conversation.item.create",
+        item: {
+          type: "function_call_output",
+          call_id: callId,
+          output,
+        },
+      });
+    }
+    turn.awaitingToolOutputs = false;
     this.send({
       type: "response.create",
       response: {
@@ -378,8 +461,32 @@ export class OpenAIRealtimeSession {
     const turn = this.activeTurn;
     const response = record(event.response);
     if (turn === null || response === null || turn.responseId === null
-        || response.id !== turn.responseId || response.status !== "completed"
-        || turn.outputBytes === 0) {
+        || response.id !== turn.responseId
+        || response.status !== "completed") {
+      this.failActive("response_incomplete");
+      return;
+    }
+    const toolCalls = extractToolCalls(response);
+    if (toolCalls === "invalid") {
+      this.failActive("tool_call_out_of_bounds");
+      return;
+    }
+    if (toolCalls.length > 0) {
+      if (this.handlers.onToolCalls === undefined) {
+        this.failActive("tool_calls_unsupported");
+        return;
+      }
+      if (turn.toolRounds >= MAX_TOOL_ROUNDS_PER_TURN) {
+        this.failActive("tool_round_limit");
+        return;
+      }
+      turn.toolRounds++;
+      turn.responseId = null;
+      turn.awaitingToolOutputs = true;
+      this.handlers.onToolCalls(turn.turnId, toolCalls);
+      return;
+    }
+    if (turn.outputBytes === 0) {
       this.failActive("response_incomplete");
       return;
     }

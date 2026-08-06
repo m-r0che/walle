@@ -8,6 +8,13 @@
     "INSTALLATION_ID": "home-prototype",
     "AUDIO_PROVIDER": "openai"
   },
+  "worker_loaders": [
+    { "binding": "LOADER" }
+  ],
+  "browser": {
+    "binding": "BROWSER",
+    "remote": true
+  },
   "durable_objects": {
     "bindings": [
       {

@@ -2,6 +2,8 @@
 
 Cloudflare Agents SDK relay for one Walle installation. The current provider is OpenAI `gpt-realtime-2.1` speech-to-speech with authenticated bounded PCM transport, rolling buffered device playback, exact sample validation, local fallback, versioned personality/voice direction, and turn-scoped semantic affect.
 
+The Agent also owns the household tools (`walle-tools-v1`): a shopping list in Durable Object SQLite (read/add/undo with per-call idempotency), a prepare→confirm→commit print pipeline with a durable job state machine ([`docs/bridge-protocol.md`](../docs/bridge-protocol.md)), Code Mode document composition (model-written JavaScript in a network-isolated Dynamic Worker sandbox via `@cloudflare/codemode`), and SVG/text → PDF rendering through the Browser Run binding. Physical printing requires a spoken confirmation bound to a content digest; the Mac bridge in [`bridge/`](../bridge/) is the only component that touches the printer.
+
 Deployed prototype: `wss://walle-relay.matt-ce8.workers.dev/v1/device`
 
 Health check: `https://walle-relay.matt-ce8.workers.dev/health`
@@ -34,7 +36,7 @@ The binary frame format is defined in [`src/protocol.ts`](src/protocol.ts). A de
 
 ## Deployment
 
-The relay is deployed to the Workers.dev prototype URL above. `DEVICE_TOKEN` is installed as a Worker secret, and the matching random device credential is held outside this repository with owner-only filesystem permissions. Remote checks pass for health, unauthorized WebSocket rejection, authentication, Agent routing, control messages, and binary PCM echo.
+The relay is deployed to the Workers.dev prototype URL above. `DEVICE_TOKEN` and `BRIDGE_TOKEN` are installed as Worker secrets, and the matching random credentials are held outside this repository with owner-only filesystem permissions. The bridge routes are `GET /v1/bridge` (WebSocket wake-up hints), `POST /v1/bridge/claim`, and `POST /v1/bridge/ack`; authenticated `GET /v1/debug/shopping-list`, `GET /v1/debug/print-jobs`, and `POST /v1/debug/print-test` are bounded bring-up seams. Remote checks pass for health, unauthorized WebSocket rejection, authentication, Agent routing, control messages, and binary PCM echo.
 
 For future releases:
 

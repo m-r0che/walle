@@ -25,6 +25,40 @@ import {
   MAX_INPUT_SAMPLES,
   type DeviceTelemetryReport,
 } from "./protocol";
+import {
+  MAX_ACTIVE_ITEMS,
+  renderShoppingListDocument,
+  SHOPPING_LIST_VERSION,
+  type ShoppingItem,
+  type ShoppingItemInput,
+} from "./shopping";
+import {
+  ALLOWED_PRINTER,
+  base64ToBytes,
+  bytesToBase64,
+  CLAIM_LEASE_SECONDS,
+  computePrintDigest,
+  isTerminalPrintJobState,
+  MAX_PDF_BASE64_CHARS,
+  nextPrintJobState,
+  PENDING_TTL_SECONDS,
+  PREPARE_TTL_SECONDS,
+  PRINT_PIPELINE_VERSION,
+  SUBMIT_STALE_SECONDS,
+  svgPrintHtml,
+  textPrintHtml,
+  validateNoteText,
+  validateSvgSource,
+  type PrintContentKind,
+  type PrintJobState,
+} from "./printing";
+import {
+  encodeToolResult,
+  parseToolInvocation,
+  WALLE_TOOLS_VERSION,
+  type RealtimeToolCall,
+  type WalleToolInvocation,
+} from "./tools";
 
 type AudioProvider = "echo" | "openai";
 type TurnProvider = AudioProvider | "failed";
@@ -62,6 +96,15 @@ export type RelayDebugStatus = {
   lastGenerationFailure: {
     turnId: string;
     reason: string;
+    createdAt: number;
+  } | null;
+  toolsVersion: string;
+  bridgeConnected: boolean;
+  printJobCounts: Record<string, number>;
+  lastToolCall: {
+    tool: string;
+    ok: boolean;
+    turnId: string;
     createdAt: number;
   } | null;
 };
@@ -122,7 +165,10 @@ const OUTPUT_STEADY_PACE_MS = 40;
 const OUTPUT_STARTUP_FRAMES = 25;
 const OUTPUT_QUEUE_COMPACT_FRAMES = 64;
 
+type ConnectionRole = "device" | "bridge";
+
 type DeviceConnectionState = {
+  role: ConnectionRole;
   ready: boolean;
   firmware: string | null;
   sessionEpoch: number;
@@ -130,6 +176,35 @@ type DeviceConnectionState = {
   lastTurnId: string | null;
   connectedAt: number;
   provider: AudioProvider;
+};
+
+type PrintJobRow = {
+  job_id: string;
+  state: PrintJobState;
+  kind: PrintContentKind;
+  title: string;
+  content: string;
+  digest: string;
+  payload_type: string | null;
+  payload_base64: string | null;
+  printer: string;
+  pages: number;
+  claim_id: string | null;
+  local_job_id: string | null;
+  failure: string | null;
+  created_at: number;
+  prepared_expires_at: number;
+};
+
+type PrintJobLease = { jobId: string; claimId: string };
+
+const MAX_BRIDGE_MESSAGE_CHARS = 4_096;
+
+type CodeSandboxExecutor = {
+  execute(
+    code: string,
+    fns: Record<string, (...args: unknown[]) => Promise<unknown>>,
+  ): Promise<{ result: unknown; error?: string; logs?: string[] }>;
 };
 
 function sendJson(connection: Connection, value: unknown): void {
@@ -158,6 +233,12 @@ export class WalleAgent extends Agent<WalleEnv> {
   private lastGenerationFailure: {
     turnId: string;
     reason: string;
+    createdAt: number;
+  } | null = null;
+  private lastToolCall: {
+    tool: string;
+    ok: boolean;
+    turnId: string;
     createdAt: number;
   } | null = null;
 
@@ -216,6 +297,49 @@ export class WalleAgent extends Agent<WalleEnv> {
         ADD COLUMN first_codec_write_ms INTEGER NOT NULL DEFAULT 0
       `;
     }
+    this.sql`
+      CREATE TABLE IF NOT EXISTS shopping_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        quantity TEXT,
+        added_at INTEGER NOT NULL,
+        removed_at INTEGER,
+        removed_reason TEXT
+      )
+    `;
+    this.sql`
+      CREATE TABLE IF NOT EXISTS shopping_ops (
+        op_id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        item_ids TEXT NOT NULL,
+        result TEXT NOT NULL,
+        undone INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL
+      )
+    `;
+    this.sql`
+      CREATE TABLE IF NOT EXISTS print_jobs (
+        job_id TEXT PRIMARY KEY,
+        state TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        digest TEXT NOT NULL,
+        payload_type TEXT,
+        payload_base64 TEXT,
+        printer TEXT NOT NULL,
+        pages INTEGER NOT NULL,
+        claim_id TEXT,
+        local_job_id TEXT,
+        failure TEXT,
+        created_at INTEGER NOT NULL,
+        prepared_expires_at INTEGER NOT NULL,
+        committed_at INTEGER,
+        claimed_at INTEGER,
+        submitted_at INTEGER,
+        finished_at INTEGER
+      )
+    `;
   }
 
   getLastPlaybackMetrics(): PlaybackMetrics | null {
@@ -294,15 +418,15 @@ export class WalleAgent extends Agent<WalleEnv> {
   getDebugStatus(): RelayDebugStatus {
     const connections = Array.from(
       this.getConnections<DeviceConnectionState>(),
-      (connection) => ({
+    ).filter((connection) => connection.state?.role !== "bridge")
+      .map((connection) => ({
         ready: connection.state?.ready ?? false,
         firmware: connection.state?.firmware ?? null,
         provider: connection.state?.provider ?? "echo",
         sessionEpoch: connection.state?.sessionEpoch ?? 0,
         activeTurnId: connection.state?.activeTurnId ?? null,
         connectedAt: connection.state?.connectedAt ?? 0,
-      }),
-    );
+      }));
     return {
       connections,
       lastTurn: this.getLastTurnMetrics(),
@@ -320,6 +444,10 @@ export class WalleAgent extends Agent<WalleEnv> {
       affectVersion: FACE_AFFECT_VERSION,
       latestTelemetry: this.latestTelemetry,
       lastGenerationFailure: this.lastGenerationFailure,
+      toolsVersion: WALLE_TOOLS_VERSION,
+      bridgeConnected: this.hasBridgeConnection(),
+      printJobCounts: this.printJobCounts(),
+      lastToolCall: this.lastToolCall,
     };
   }
 
@@ -367,16 +495,23 @@ export class WalleAgent extends Agent<WalleEnv> {
       connection.close(4001, "Unauthorized");
       return;
     }
+    if (ctx.request.headers.get("X-Walle-Role") === "bridge") {
+      this.acceptBridgeConnection(connection);
+      return;
+    }
 
     this.closeRealtime("device connection replaced");
-    for (const existing of this.getConnections()) {
-      if (existing.id !== connection.id) {
+    for (const existing of
+      this.getConnections<DeviceConnectionState>()) {
+      if (existing.id !== connection.id
+          && existing.state?.role !== "bridge") {
         existing.close(4009, "Replaced by a newer device connection");
       }
     }
 
     const connectedAt = Date.now();
     connection.setState({
+      role: "device",
       ready: false,
       firmware: null,
       sessionEpoch: 0,
@@ -404,11 +539,71 @@ export class WalleAgent extends Agent<WalleEnv> {
     }));
   }
 
+  private acceptBridgeConnection(
+    connection: Connection<DeviceConnectionState>,
+  ): void {
+    for (const existing of
+      this.getConnections<DeviceConnectionState>()) {
+      if (existing.id !== connection.id
+          && existing.state?.role === "bridge") {
+        existing.close(4009, "Replaced by a newer bridge connection");
+      }
+    }
+    connection.setState({
+      role: "bridge",
+      ready: true,
+      firmware: null,
+      sessionEpoch: 0,
+      activeTurnId: null,
+      lastTurnId: null,
+      connectedAt: Date.now(),
+      provider: "echo",
+    });
+    console.log(JSON.stringify({
+      event: "bridge.connected",
+      installation: this.name,
+      connectionId: connection.id,
+    }));
+  }
+
+  private handleBridgeMessage(
+    connection: Connection<DeviceConnectionState>,
+    message: WSMessage,
+  ): void {
+    if (typeof message !== "string"
+        || message.length > MAX_BRIDGE_MESSAGE_CHARS) {
+      throw new Error("bridge messages must be bounded JSON text");
+    }
+    const value = JSON.parse(message) as Record<string, unknown>;
+    switch (value.type) {
+      case "hello":
+        sendJson(connection, {
+          v: 1,
+          type: "bridge.ready",
+          printer: ALLOWED_PRINTER,
+          pending: this.countPrintJobs("pending"),
+        });
+        return;
+      case "ping":
+        if (typeof value.nonce !== "string" || value.nonce.length > 64) {
+          throw new Error("bridge ping nonce is invalid");
+        }
+        sendJson(connection, { v: 1, type: "pong", nonce: value.nonce });
+        return;
+      default:
+        throw new Error("unknown bridge message type");
+    }
+  }
+
   async onMessage(
     connection: Connection<DeviceConnectionState>,
     message: WSMessage,
   ): Promise<void> {
     try {
+      if (connection.state?.role === "bridge") {
+        this.handleBridgeMessage(connection, message);
+        return;
+      }
       if (typeof message === "string") {
         await this.handleControl(connection, message);
         return;
@@ -788,6 +983,9 @@ export class WalleAgent extends Agent<WalleEnv> {
             this.failRealtimeTurn(connectionId, turnId, reason),
           onUnavailable: (reason) =>
             this.handleRealtimeUnavailable(connectionId, reason),
+          onToolCalls: (turnId, calls) => {
+            void this.runRealtimeToolCalls(connectionId, turnId, calls);
+          },
         },
       );
       this.realtime = realtime;
@@ -1073,12 +1271,772 @@ export class WalleAgent extends Agent<WalleEnv> {
     realtime?.close(1000, reason);
   }
 
+  // ---- Realtime tool execution -------------------------------------------
+
+  private async runRealtimeToolCalls(
+    connectionId: string,
+    turnId: string,
+    calls: RealtimeToolCall[],
+  ): Promise<void> {
+    const outputs: Array<{ callId: string; output: string }> = [];
+    for (const call of calls) {
+      outputs.push({
+        callId: call.callId,
+        output: await this.executeToolCall(turnId, call),
+      });
+    }
+    const realtime = this.realtime;
+    if (realtime === null || this.realtimeConnectionId !== connectionId) {
+      return;
+    }
+    try {
+      realtime.submitToolOutputs(turnId, outputs);
+    } catch (error) {
+      this.failRealtimeTurn(
+        connectionId,
+        turnId,
+        error instanceof Error ? error.message : "tool_submit_failed",
+      );
+    }
+  }
+
+  private async executeToolCall(
+    turnId: string,
+    call: RealtimeToolCall,
+  ): Promise<string> {
+    let result: Record<string, unknown>;
+    try {
+      const invocation = parseToolInvocation(call);
+      result = await this.runTool(invocation, call.callId);
+    } catch (error) {
+      result = {
+        ok: false,
+        error: (error instanceof Error
+          ? error.message
+          : "tool execution failed").slice(0, 240),
+      };
+    }
+    const ok = result.ok !== false;
+    this.lastToolCall = {
+      tool: call.name.slice(0, 64),
+      ok,
+      turnId,
+      createdAt: Date.now(),
+    };
+    // Log the tool name and outcome only: arguments and results are the
+    // owner's content and stay out of routine logs.
+    console.log(JSON.stringify({
+      event: "device.tool_call",
+      installation: this.name,
+      turnId,
+      tool: call.name.slice(0, 64),
+      ok,
+    }));
+    return encodeToolResult(result);
+  }
+
+  private async runTool(
+    invocation: WalleToolInvocation,
+    callId: string,
+  ): Promise<Record<string, unknown>> {
+    switch (invocation.name) {
+      case "shopping_list_read": {
+        const items = this.activeShoppingItems();
+        return {
+          ok: true,
+          count: items.length,
+          items: items.map((item) => ({
+            id: item.id,
+            name: item.name,
+            quantity: item.quantity,
+          })),
+        };
+      }
+      case "shopping_list_add":
+        return this.addShoppingItems(invocation.items, callId);
+      case "shopping_list_undo":
+        return this.undoShoppingAdd(callId);
+      case "print_prepare":
+        return this.preparePrintJob(
+          invocation.kind,
+          invocation.title,
+          invocation.kind === "shopping_list"
+            ? renderShoppingListDocument(
+              this.activeShoppingItems(), new Date())
+            : invocation.kind === "note"
+              ? invocation.text ?? ""
+              : invocation.svg ?? "",
+        );
+      case "compose_document":
+        return this.composeDocument(invocation.title, invocation.code);
+      case "print_commit":
+        return this.commitPrintJob(invocation.jobId, invocation.digest);
+      case "print_status": {
+        const job = invocation.jobId === null
+          ? this.latestPrintJob()
+          : this.getPrintJob(invocation.jobId);
+        if (job === null) return { ok: false, error: "no print jobs found" };
+        return {
+          ok: true,
+          jobId: job.job_id,
+          state: job.state,
+          title: job.title,
+          failure: job.failure,
+          localJobId: job.local_job_id,
+        };
+      }
+    }
+  }
+
+  // ---- Shopping list ------------------------------------------------------
+
+  private activeShoppingItems(): ShoppingItem[] {
+    const rows = this.sql<{
+      id: number;
+      name: string;
+      quantity: string | null;
+      added_at: number;
+    }>`
+      SELECT id, name, quantity, added_at FROM shopping_items
+      WHERE removed_at IS NULL
+      ORDER BY id ASC
+      LIMIT ${MAX_ACTIVE_ITEMS}
+    `;
+    return rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      quantity: row.quantity,
+      addedAt: row.added_at,
+    }));
+  }
+
+  private storedOpResult(opId: string): Record<string, unknown> | null {
+    const rows = this.sql<{ result: string }>`
+      SELECT result FROM shopping_ops WHERE op_id = ${opId}
+    `;
+    const row = rows[0];
+    if (row === undefined) return null;
+    return JSON.parse(row.result) as Record<string, unknown>;
+  }
+
+  private addShoppingItems(
+    items: ShoppingItemInput[],
+    opId: string,
+  ): Record<string, unknown> {
+    const replayed = this.storedOpResult(opId);
+    if (replayed !== null) return replayed;
+    const active = this.activeShoppingItems();
+    if (active.length + items.length > MAX_ACTIVE_ITEMS) {
+      return {
+        ok: false,
+        error: `the list is limited to ${MAX_ACTIVE_ITEMS} items`,
+      };
+    }
+    const now = Date.now();
+    const added: Array<{ id: number; name: string; quantity: string | null }>
+      = [];
+    for (const item of items) {
+      this.sql`
+        INSERT INTO shopping_items (name, quantity, added_at)
+        VALUES (${item.name}, ${item.quantity}, ${now})
+      `;
+      const idRows = this.sql<{ id: number }>`
+        SELECT last_insert_rowid() AS id
+      `;
+      added.push({
+        id: idRows[0]?.id ?? 0,
+        name: item.name,
+        quantity: item.quantity,
+      });
+    }
+    const result = {
+      ok: true,
+      added,
+      count: active.length + added.length,
+    };
+    this.sql`
+      INSERT INTO shopping_ops (op_id, kind, item_ids, result, created_at)
+      VALUES (${opId}, 'add', ${JSON.stringify(added.map((item) => item.id))},
+              ${JSON.stringify(result)}, ${now})
+    `;
+    return result;
+  }
+
+  private undoShoppingAdd(opId: string): Record<string, unknown> {
+    const replayed = this.storedOpResult(opId);
+    if (replayed !== null) return replayed;
+    const ops = this.sql<{ op_id: string; item_ids: string }>`
+      SELECT op_id, item_ids FROM shopping_ops
+      WHERE kind = 'add' AND undone = 0
+      ORDER BY created_at DESC, op_id DESC
+      LIMIT 1
+    `;
+    const op = ops[0];
+    if (op === undefined) {
+      return { ok: false, error: "there is no recent addition to undo" };
+    }
+    const itemIds = (JSON.parse(op.item_ids) as number[])
+      .filter((id) => Number.isInteger(id));
+    const now = Date.now();
+    const removed: string[] = [];
+    for (const id of itemIds) {
+      const rows = this.sql<{ name: string }>`
+        SELECT name FROM shopping_items
+        WHERE id = ${id} AND removed_at IS NULL
+      `;
+      const row = rows[0];
+      if (row === undefined) continue;
+      this.sql`
+        UPDATE shopping_items
+        SET removed_at = ${now}, removed_reason = 'undo'
+        WHERE id = ${id}
+      `;
+      removed.push(row.name);
+    }
+    this.sql`
+      UPDATE shopping_ops SET undone = 1 WHERE op_id = ${op.op_id}
+    `;
+    const result = {
+      ok: true,
+      removed,
+      count: this.activeShoppingItems().length,
+    };
+    this.sql`
+      INSERT INTO shopping_ops (op_id, kind, item_ids, result, created_at)
+      VALUES (${opId}, 'undo', ${op.item_ids},
+              ${JSON.stringify(result)}, ${now})
+    `;
+    return result;
+  }
+
+  // ---- Print pipeline -----------------------------------------------------
+
+  private getPrintJob(jobId: string): PrintJobRow | null {
+    const rows = this.sql<PrintJobRow>`
+      SELECT job_id, state, kind, title, content, digest, payload_type,
+             payload_base64, printer, pages, claim_id, local_job_id,
+             failure, created_at, prepared_expires_at
+      FROM print_jobs WHERE job_id = ${jobId}
+    `;
+    return rows[0] ?? null;
+  }
+
+  private latestPrintJob(): PrintJobRow | null {
+    const rows = this.sql<PrintJobRow>`
+      SELECT job_id, state, kind, title, content, digest, payload_type,
+             payload_base64, printer, pages, claim_id, local_job_id,
+             failure, created_at, prepared_expires_at
+      FROM print_jobs ORDER BY created_at DESC, job_id DESC LIMIT 1
+    `;
+    return rows[0] ?? null;
+  }
+
+  private countPrintJobs(state: PrintJobState): number {
+    const rows = this.sql<{ total: number }>`
+      SELECT COUNT(*) AS total FROM print_jobs WHERE state = ${state}
+    `;
+    return rows[0]?.total ?? 0;
+  }
+
+  private printJobCounts(): Record<string, number> {
+    const rows = this.sql<{ state: string; total: number }>`
+      SELECT state, COUNT(*) AS total FROM print_jobs GROUP BY state
+    `;
+    return Object.fromEntries(rows.map((row) => [row.state, row.total]));
+  }
+
+  private setPrintJobState(
+    jobId: string,
+    state: PrintJobState,
+    failure: string | null = null,
+  ): void {
+    const finished = isTerminalPrintJobState(state) ? Date.now() : null;
+    this.sql`
+      UPDATE print_jobs
+      SET state = ${state},
+          failure = COALESCE(${failure}, failure),
+          finished_at = COALESCE(${finished}, finished_at)
+      WHERE job_id = ${jobId}
+    `;
+    console.log(JSON.stringify({
+      event: "print.job_state",
+      installation: this.name,
+      jobId,
+      state,
+      failure,
+    }));
+  }
+
+  private async preparePrintJob(
+    kind: PrintContentKind,
+    title: string,
+    content: string,
+  ): Promise<Record<string, unknown>> {
+    if (content.length === 0) {
+      return { ok: false, error: "there is no content to print" };
+    }
+    const jobId = crypto.randomUUID();
+    const digest = await computePrintDigest(kind, title, content);
+    const now = Date.now();
+    const expiresAt = now + PREPARE_TTL_SECONDS * 1_000;
+    this.sql`
+      INSERT INTO print_jobs
+        (job_id, state, kind, title, content, digest, printer, pages,
+         created_at, prepared_expires_at)
+      VALUES (${jobId}, 'prepared', ${kind}, ${title}, ${content},
+              ${digest}, ${ALLOWED_PRINTER}, 1, ${now}, ${expiresAt})
+    `;
+    await this.schedule(
+      PREPARE_TTL_SECONDS, "printPrepareExpired", jobId);
+    const summary = kind === "shopping_list"
+      ? `the shopping list (${this.activeShoppingItems().length} items)`
+      : kind === "note"
+        ? `a note (${content.split("\n").length} lines)`
+        : `a drawing titled "${title}"`;
+    return {
+      ok: true,
+      jobId,
+      digest,
+      title,
+      kind,
+      pages: 1,
+      printer: ALLOWED_PRINTER,
+      summary,
+      nextStep: "Describe the summary and ask the user to confirm before "
+        + "calling print_commit.",
+    };
+  }
+
+  private async composeDocument(
+    title: string,
+    code: string,
+  ): Promise<Record<string, unknown>> {
+    const executor = await this.createCodeSandbox();
+    if (executor === null) {
+      return { ok: false, error: "the code sandbox is unavailable" };
+    }
+    const items = this.activeShoppingItems();
+    const execution = await executor.execute(code, {
+      listShoppingItems: async () => items.map((item) => ({
+        id: item.id,
+        name: item.name,
+        quantity: item.quantity,
+      })),
+    });
+    const logs = (execution.logs ?? []).slice(0, 3)
+      .map((line) => line.slice(0, 200));
+    if (execution.error !== undefined) {
+      return {
+        ok: false,
+        error: `sandbox error: ${execution.error.slice(0, 240)}`,
+        logs,
+      };
+    }
+    const output = execution.result as Record<string, unknown> | null;
+    try {
+      if (typeof output?.svg === "string") {
+        return await this.preparePrintJob(
+          "svg", title, validateSvgSource(output.svg));
+      }
+      if (typeof output?.text === "string") {
+        return await this.preparePrintJob(
+          "note", title, validateNoteText(output.text));
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        error: (error instanceof Error
+          ? error.message : "invalid document").slice(0, 240),
+        logs,
+      };
+    }
+    return {
+      ok: false,
+      error: "code must return { svg: string } or { text: string }",
+      logs,
+    };
+  }
+
+  private async createCodeSandbox(): Promise<CodeSandboxExecutor | null> {
+    const loader = (this.env as { LOADER?: unknown }).LOADER;
+    if (loader === undefined || loader === null) return null;
+    const { DynamicWorkerExecutor } = await import("@cloudflare/codemode");
+    return new DynamicWorkerExecutor({
+      loader: loader as ConstructorParameters<
+        typeof DynamicWorkerExecutor>[0]["loader"],
+      timeout: 20_000,
+    }) as CodeSandboxExecutor;
+  }
+
+  private async commitPrintJob(
+    jobId: string,
+    digest: string,
+  ): Promise<Record<string, unknown>> {
+    const job = this.getPrintJob(jobId);
+    if (job === null) return { ok: false, error: "unknown print job" };
+    if (job.state === "confirmed" || job.state === "pending") {
+      return { ok: true, jobId, state: job.state };
+    }
+    if (job.state !== "prepared") {
+      return { ok: false, error: `the job is already ${job.state}` };
+    }
+    if (job.digest !== digest) {
+      return {
+        ok: false,
+        error: "digest mismatch: prepare the job again",
+      };
+    }
+    if (Date.now() > job.prepared_expires_at) {
+      return {
+        ok: false,
+        error: "the prepared job expired: prepare it again",
+      };
+    }
+    this.sql`
+      UPDATE print_jobs SET committed_at = ${Date.now()}
+      WHERE job_id = ${jobId}
+    `;
+    this.setPrintJobState(jobId, nextPrintJobState(job.state, "commit"));
+    await this.schedule(0, "renderPrintJob", jobId);
+    return {
+      ok: true,
+      jobId,
+      state: "confirmed",
+      message: "the job is confirmed and heading to the printer",
+    };
+  }
+
+  /** Schedule callback: render a confirmed job into its bridge payload. */
+  async renderPrintJob(jobId: unknown): Promise<void> {
+    if (typeof jobId !== "string") return;
+    const job = this.getPrintJob(jobId);
+    if (job === null || job.state !== "confirmed") return;
+    let payloadType: string;
+    let payloadBase64: string;
+    try {
+      const html = job.kind === "svg"
+        ? svgPrintHtml(job.content)
+        : textPrintHtml(job.content);
+      const pdf = await this.renderPdf(html);
+      payloadType = "application/pdf";
+      payloadBase64 = pdf;
+    } catch (error) {
+      const reason = (error instanceof Error
+        ? error.message : "render failed").slice(0, 240);
+      if (job.kind === "svg") {
+        // A drawing cannot fall back to text; the job fails truthfully.
+        this.setPrintJobState(
+          jobId,
+          nextPrintJobState(job.state, "render.failed"),
+          `pdf render failed: ${reason}`,
+        );
+        return;
+      }
+      console.warn(JSON.stringify({
+        event: "print.render_fallback",
+        installation: this.name,
+        jobId,
+        reason,
+      }));
+      payloadType = "text/plain";
+      payloadBase64 = bytesToBase64(
+        new TextEncoder().encode(job.content));
+    }
+    this.sql`
+      UPDATE print_jobs
+      SET payload_type = ${payloadType}, payload_base64 = ${payloadBase64}
+      WHERE job_id = ${jobId}
+    `;
+    this.setPrintJobState(
+      jobId, nextPrintJobState(job.state, "render.succeeded"));
+    await this.schedule(PENDING_TTL_SECONDS, "printPendingExpired", jobId);
+    this.notifyBridges();
+  }
+
+  private async renderPdf(html: string): Promise<string> {
+    const browser = (this.env as { BROWSER?: unknown }).BROWSER as {
+      quickAction(
+        action: string,
+        options: Record<string, unknown>,
+      ): Promise<unknown>;
+    } | undefined;
+    if (browser === undefined || typeof browser.quickAction !== "function") {
+      throw new Error("browser rendering binding is unavailable");
+    }
+    const rendered = await browser.quickAction("pdf", { html });
+    let bytes: Uint8Array;
+    if (rendered instanceof ArrayBuffer) {
+      bytes = new Uint8Array(rendered);
+    } else if (rendered instanceof Uint8Array) {
+      bytes = rendered;
+    } else if (typeof rendered === "string") {
+      bytes = base64ToBytes(rendered);
+    } else if (rendered instanceof Response) {
+      bytes = new Uint8Array(await rendered.arrayBuffer());
+    } else {
+      throw new Error("unexpected pdf render result shape");
+    }
+    if (bytes.byteLength < 5
+        || String.fromCharCode(...bytes.subarray(0, 4)) !== "%PDF") {
+      throw new Error("render result is not a PDF document");
+    }
+    const encoded = bytesToBase64(bytes);
+    if (encoded.length > MAX_PDF_BASE64_CHARS) {
+      throw new Error("rendered PDF exceeds the bounded size");
+    }
+    return encoded;
+  }
+
+  // ---- Bridge claim/ack ---------------------------------------------------
+
+  private hasBridgeConnection(): boolean {
+    for (const connection of
+      this.getConnections<DeviceConnectionState>()) {
+      if (connection.state?.role === "bridge") return true;
+    }
+    return false;
+  }
+
+  private notifyBridges(): void {
+    const pending = this.countPrintJobs("pending");
+    if (pending === 0) return;
+    for (const connection of
+      this.getConnections<DeviceConnectionState>()) {
+      if (connection.state?.role === "bridge") {
+        sendJson(connection, { v: 1, type: "job.available", pending });
+      }
+    }
+  }
+
+  async claimPrintJob(): Promise<Record<string, unknown> | null> {
+    const rows = this.sql<{ job_id: string }>`
+      SELECT job_id FROM print_jobs
+      WHERE state = 'pending'
+      ORDER BY created_at ASC, job_id ASC
+      LIMIT 1
+    `;
+    const jobId = rows[0]?.job_id;
+    if (jobId === undefined) return null;
+    const job = this.getPrintJob(jobId);
+    if (job === null) return null;
+    const claimId = crypto.randomUUID();
+    this.sql`
+      UPDATE print_jobs
+      SET claim_id = ${claimId}, claimed_at = ${Date.now()}
+      WHERE job_id = ${jobId}
+    `;
+    this.setPrintJobState(jobId, nextPrintJobState(job.state, "claim"));
+    await this.schedule(
+      CLAIM_LEASE_SECONDS,
+      "printClaimLeaseExpired",
+      { jobId, claimId } satisfies PrintJobLease,
+    );
+    return {
+      jobId,
+      claimId,
+      kind: job.kind,
+      title: job.title,
+      digest: job.digest,
+      printer: job.printer,
+      pages: job.pages,
+      payloadType: job.payload_type,
+      payloadBase64: job.payload_base64,
+      leaseSeconds: CLAIM_LEASE_SECONDS,
+    };
+  }
+
+  async ackPrintJob(input: unknown): Promise<Record<string, unknown>> {
+    const value = (typeof input === "object" && input !== null
+      ? input : {}) as Record<string, unknown>;
+    const jobId = typeof value.jobId === "string" ? value.jobId : "";
+    const claimId = typeof value.claimId === "string" ? value.claimId : "";
+    const phase = value.phase;
+    const localJobId = typeof value.localJobId === "string"
+      ? value.localJobId.slice(0, 64)
+      : null;
+    const failure = typeof value.failure === "string"
+      ? value.failure.slice(0, 240)
+      : null;
+    if (phase !== "submitted" && phase !== "completed"
+        && phase !== "failed") {
+      return { ok: false, error: "phase must be submitted|completed|failed" };
+    }
+    const job = this.getPrintJob(jobId);
+    if (job === null) return { ok: false, error: "unknown print job" };
+    if (job.claim_id !== claimId || claimId.length === 0) {
+      return { ok: false, error: "claim does not match the job" };
+    }
+    const event = phase === "submitted"
+      ? "ack.submitted" as const
+      : phase === "completed"
+        ? "ack.completed" as const
+        : "ack.failed" as const;
+    // Repeating the ack that produced the current state is a no-op so the
+    // bridge can retry safely after a crash.
+    if ((phase === "submitted" && job.state === "submitted")
+        || (phase === "completed" && job.state === "completed")
+        || (phase === "failed" && job.state === "failed")) {
+      return { ok: true, jobId, state: job.state };
+    }
+    let nextState: PrintJobState;
+    try {
+      nextState = nextPrintJobState(job.state, event);
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : "invalid ack",
+      };
+    }
+    if (phase === "submitted") {
+      this.sql`
+        UPDATE print_jobs
+        SET local_job_id = ${localJobId}, submitted_at = ${Date.now()}
+        WHERE job_id = ${jobId}
+      `;
+      await this.schedule(
+        SUBMIT_STALE_SECONDS,
+        "printSubmitStale",
+        { jobId, claimId } satisfies PrintJobLease,
+      );
+    }
+    this.setPrintJobState(jobId, nextState, failure);
+    return { ok: true, jobId, state: nextState };
+  }
+
+  // ---- Schedule callbacks -------------------------------------------------
+
+  /** Schedule callback: cancel a prepared job never confirmed in time. */
+  printPrepareExpired(jobId: unknown): void {
+    if (typeof jobId !== "string") return;
+    const job = this.getPrintJob(jobId);
+    if (job?.state !== "prepared") return;
+    this.setPrintJobState(
+      jobId,
+      nextPrintJobState(job.state, "prepare.expired"),
+      "the prepared job was not confirmed in time",
+    );
+  }
+
+  /** Schedule callback: fail a pending job no bridge ever claimed. */
+  printPendingExpired(jobId: unknown): void {
+    if (typeof jobId !== "string") return;
+    const job = this.getPrintJob(jobId);
+    if (job?.state !== "pending") return;
+    this.setPrintJobState(
+      jobId,
+      nextPrintJobState(job.state, "pending.stale"),
+      "no print bridge claimed the job in time",
+    );
+  }
+
+  /** Schedule callback: a claimed job's lease lapsed without an ack. */
+  printClaimLeaseExpired(payload: unknown): void {
+    const lease = payload as PrintJobLease | null;
+    if (typeof lease?.jobId !== "string"
+        || typeof lease.claimId !== "string") return;
+    const job = this.getPrintJob(lease.jobId);
+    if (job?.state !== "claimed" || job.claim_id !== lease.claimId) return;
+    this.setPrintJobState(
+      lease.jobId,
+      nextPrintJobState(job.state, "lease.expired"),
+      "the bridge claimed the job but never acknowledged it",
+    );
+  }
+
+  /** Schedule callback: a submitted job never confirmed completion. */
+  printSubmitStale(payload: unknown): void {
+    const lease = payload as PrintJobLease | null;
+    if (typeof lease?.jobId !== "string"
+        || typeof lease.claimId !== "string") return;
+    const job = this.getPrintJob(lease.jobId);
+    if (job?.state !== "submitted" || job.claim_id !== lease.claimId) return;
+    this.setPrintJobState(
+      lease.jobId,
+      nextPrintJobState(job.state, "submit.stale"),
+      "the printer never confirmed completion",
+    );
+  }
+
+  // ---- Debug --------------------------------------------------------------
+
+  /**
+   * Bring-up seam: prepare and immediately commit a bounded test job so the
+   * bridge path can be exercised without a voice session. Uses the same
+   * validation, digest, and state machine as the real tools.
+   */
+  async printTestForBringup(input: unknown): Promise<Record<string, unknown>> {
+    const value = (typeof input === "object" && input !== null
+      ? input : {}) as Record<string, unknown>;
+    const kind = value.kind === "svg" ? "svg" as const : "note" as const;
+    const title = `Bring-up test ${new Date().toISOString()}`;
+    let content: string;
+    try {
+      content = kind === "svg"
+        ? validateSvgSource(value.svg)
+        : validateNoteText(typeof value.text === "string"
+          ? value.text
+          : `Walle print bring-up test\n${title}`);
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : "invalid content",
+      };
+    }
+    const prepared = await this.preparePrintJob(kind, title, content);
+    if (prepared.ok !== true) return prepared;
+    const committed = await this.commitPrintJob(
+      prepared.jobId as string, prepared.digest as string);
+    return { prepared, committed };
+  }
+
+  getShoppingListDebug(): Record<string, unknown> {
+    return {
+      version: SHOPPING_LIST_VERSION,
+      items: this.activeShoppingItems(),
+    };
+  }
+
+  getPrintJobsDebug(): Record<string, unknown> {
+    const rows = this.sql<{
+      job_id: string;
+      state: string;
+      kind: string;
+      title: string;
+      digest: string;
+      payload_type: string | null;
+      local_job_id: string | null;
+      failure: string | null;
+      created_at: number;
+      finished_at: number | null;
+    }>`
+      SELECT job_id, state, kind, title, digest, payload_type,
+             local_job_id, failure, created_at, finished_at
+      FROM print_jobs ORDER BY created_at DESC, job_id DESC LIMIT 20
+    `;
+    return {
+      version: PRINT_PIPELINE_VERSION,
+      bridgeConnected: this.hasBridgeConnection(),
+      jobs: rows,
+    };
+  }
+
   onClose(
     connection: Connection<DeviceConnectionState>,
     code: number,
     reason: string,
     wasClean: boolean,
   ): void {
+    if (connection.state?.role === "bridge") {
+      console.log(JSON.stringify({
+        event: "bridge.disconnected",
+        installation: this.name,
+        connectionId: connection.id,
+        code,
+        reason,
+        wasClean,
+      }));
+      return;
+    }
     this.turnStats.delete(connection.id);
     this.suppressedPongs.delete(connection.id);
     if (this.realtimeConnectionId === connection.id) {

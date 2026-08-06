@@ -1,3 +1,4 @@
 # Copy to .dev.vars for local development. Never commit the real token.
 DEVICE_TOKEN=replace-with-at-least-16-random-characters
+BRIDGE_TOKEN=replace-with-a-different-16-plus-random-value
 OPENAI_API_KEY=replace-with-an-openai-project-key
