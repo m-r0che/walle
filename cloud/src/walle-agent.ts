@@ -11,8 +11,8 @@ import {
   type FaceAffectIntent,
 } from "./affect";
 import {
-  OpenAIRealtimeSession,
-} from "./openai-realtime";
+  OpenAILiveSession,
+} from "./openai-live";
 import {
   WALLE_PERSONALITY_VERSION,
   WALLE_VOICE_PROFILE_VERSION,
@@ -141,7 +141,7 @@ export class WalleAgent extends Agent<WalleEnv> {
   private readonly suppressedPongs = new Set<string>();
   private dropNextOutputFrame = false;
   private mismatchNextDoneSamples = false;
-  private realtime: OpenAIRealtimeSession | null = null;
+  private realtime: OpenAILiveSession | null = null;
   private realtimeConnectionId: string | null = null;
   private pendingResponse: PendingResponse | null = null;
   private provider: AudioProvider = "echo";
@@ -772,7 +772,7 @@ export class WalleAgent extends Agent<WalleEnv> {
     }
     this.realtimeConnectionId = connectionId;
     try {
-      const realtime = await OpenAIRealtimeSession.connect(
+      const realtime = await OpenAILiveSession.connect(
         apiKey,
         this.name,
         {

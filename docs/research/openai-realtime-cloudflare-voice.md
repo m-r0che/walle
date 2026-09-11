@@ -2,6 +2,8 @@
 
 **Research date:** 2026-07-31
 
+This page records the `gpt-realtime-2.1` bring-up, which the Live API adapter (`gpt-live-1`, described in [`cloud/README.md`](../../cloud/README.md)) has since replaced.
+
 ## OpenAI Realtime facts used
 
 Current official OpenAI documentation specifies server-to-server WebSocket connections at:

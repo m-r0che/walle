@@ -1,6 +1,6 @@
 # Walle Cloud relay
 
-Cloudflare Agents SDK relay for one Walle installation. The current provider is OpenAI `gpt-realtime-2.1` speech-to-speech with authenticated bounded PCM transport, rolling buffered device playback, exact sample validation, local fallback, versioned personality/voice direction, and turn-scoped semantic affect.
+Cloudflare Agents SDK relay for one Walle installation. The current provider is OpenAI `gpt-live-1` over the Live API (`wss://api.openai.com/v1/live/sessions`), with authenticated bounded PCM transport, rolling buffered device playback, exact sample validation, local fallback, versioned personality/voice direction, and turn-scoped semantic affect.
 
 Deployed prototype: `wss://walle-relay.matt-ce8.workers.dev/v1/device`
 
@@ -31,6 +31,17 @@ npm run dev
 Health check: `GET http://localhost:8787/health`.
 
 The binary frame format is defined in [`src/protocol.ts`](src/protocol.ts). A device must send `hello`, then `turn.start`, then input PCM frames. In echo mode each input frame is returned immediately as an output PCM frame. Frame sequences must be contiguous within a turn, but the first sequence may be any unsigned 32-bit value. `turn.commit` finishes the turn; `turn.cancel` drops it.
+
+## Live turn model
+
+The Live API has no input commit and no end-of-reply event, so [`src/live-turn.ts`](src/live-turn.ts) supplies the turn machine as a pure reducer over `(policy, state, input, now)`, and [`src/openai-live.ts`](src/openai-live.ts) owns the socket, the JSON, and one timer.
+
+- `turn.start` opens a hold. The Agent stores the input frames and sends nothing upstream.
+- `turn.commit` sends the whole utterance as one burst: `session.input_audio.unmute`, one `session.input_audio.append` per 960 samples, then `session.input_audio.mute`. If an earlier reply is still draining, the commit waits and bursts when the stream is quiet.
+- A reply ends 1200 ms after its last output audio or transcript delta. `turn.done` then reports exactly the samples forwarded, including the final partial frame. Every forwarded frame before the last is 1920 bytes.
+- `response.cancel` after a commit drops the rest of that reply. Live has no speech cancel, so the adapter discards the tail until 1200 ms of quiet. A new `turn.start` during a reply fails the old turn with `superseded`.
+- No output within 6 s fails the turn with `no_upstream_audio`. Output past 28 s fails it with `output_overflow`. A cancelled reply still arriving 20 s later closes the session.
+- A failed `session.start` falls back to echo. A socket loss after `session.started` closes the device connection with code 1012 so the firmware reconnects.
 
 ## Deployment
 
