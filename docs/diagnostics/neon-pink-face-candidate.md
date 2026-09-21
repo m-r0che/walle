@@ -61,14 +61,30 @@ Off-device stills, rendered with `tools/face_neon_preview.py`:
 - App size reported by ESP-IDF: `0x1610f0` (sprite candidate was
   `0x23b750`). Smallest app partition: `0x800000`, 83% free.
 
+## Smoke check
+
+Flashed `d35532d` to `/dev/cu.usbmodem1101` on 2026-09-21; app SHA-256
+`9d3df39facc38a1278222f6b563abdf98486366fce3d6b58ec92d8228ead1cdd`.
+Serial capture over the first 45 seconds after a reset:
+
+- Flash verification passed and the device reported app version `d35532d`.
+- Display port came up as `448x368 software-rotated landscape, one 110-row
+  internal DMA buffer, minimum interval=35000us`, unchanged.
+- Face telemetry settled at 8.4–9.1 FPS with 32–40 ms average render time
+  and about 27 panel submissions per second, so the 344x286 canvas is
+  flushing as three transfers per frame under the 35 ms pacing.
+- 1,048 display submissions, 1,048 completions, zero submit errors, zero
+  overlaps.
+- Wi-Fi connected, authenticated WSS established, relay protocol ready.
+- One hold-to-speak turn completed end to end: PTT press and release,
+  remote playback from first codec write at 1,251 ms release latency,
+  semantic affect applied, playback complete with zero failures.
+- Free internal RAM held around 55 KB with a 39 KB minimum; PSRAM steady.
+
 ## Remaining before promotion
 
-The device was not connected when this candidate was built, so nothing
-below has been physically checked.
-
-- Flash and confirm the face is visible after a true cold boot.
-- Inspect the pink on the AMOLED at the fixed 45% brightness; the panel's
-  red primary may read warmer or dimmer than the sRGB preview.
-- Confirm blink, gaze, breathing, hold-to-speak, and the speaking mouth
-  remain as responsive as the cyan build.
+- Owner visual confirmation of the pink on the AMOLED and of blink, gaze,
+  and speaking-mouth responsiveness. Telemetry cannot prove panel output.
+- Confirm the face is visible after a true cold power-off boot, not only
+  the post-flash reset above.
 - Run a 20–30 minute visible soak before promoting to `main`.
