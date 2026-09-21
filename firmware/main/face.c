@@ -1,7 +1,5 @@
 #include "face.h"
 
-#include "face_sprite_assets.h"
-
 #include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -16,10 +14,27 @@
 
 #define FACE_WIDTH 448
 #define FACE_HEIGHT 368
+// The procedural neon renderer is the accepted face. The sprite-composited
+// candidate from 2026-08-05 stays available behind this switch; enabling it
+// also requires adding face_sprite_assets.c back to the component sources.
+#define FACE_USE_SPRITES 0
+#if FACE_USE_SPRITES
+#include "face_sprite_assets.h"
+// Sprite sheet origins are authored in full logical screen coordinates.
 #define FACE_CANVAS_WIDTH FACE_WIDTH
 #define FACE_CANVAS_HEIGHT FACE_HEIGHT
 #define FACE_CANVAS_X 0
 #define FACE_CANVAS_Y 0
+#else
+// The centred 344 x 286 canvas is the physically validated neon-face geometry.
+// Every frame invalidates the whole canvas, so a full-screen canvas would push
+// more 110-row transfers through the 35 ms panel pacing and lower the visible
+// cadence; the bounded canvas also leaves room for the anti-burn-in drift.
+#define FACE_CANVAS_WIDTH 344
+#define FACE_CANVAS_HEIGHT 286
+#define FACE_CANVAS_X ((FACE_WIDTH - FACE_CANVAS_WIDTH) / 2)
+#define FACE_CANVAS_Y 39
+#endif
 // LVGL may request motion faster than the panel's two-transfer visible cadence;
 // completion ownership and display pacing safely coalesce those requests. This
 // keeps the next pose ready promptly without the rejected one-transfer renderer
@@ -30,7 +45,6 @@
 #define FACE_OFFLINE_FRAME_PERIOD_MS 100
 #define FACE_DRIFT_PERIOD_MS 60000
 #define DEFAULT_MOOD_INTENSITY 0.72f
-#define FACE_USE_SPRITES 1
 #define EYE_POINT_COUNT 17
 #define BROW_POINT_COUNT 9
 #define MOUTH_POINT_COUNT 13
@@ -74,6 +88,15 @@ typedef struct {
     uint8_t green;
     uint8_t blue;
 } raster_color_t;
+
+#if !FACE_USE_SPRITES
+// Neon pink glow palette. The two outer glow passes and the pupil halo use the
+// deep tone; the bright core pass and the pupil core use the ice tone. Both are
+// the earlier cyan face (deep 0x006775, ice 0xb9ffff) rotated to a hot-pink
+// hue, so the dimmed RGB565 glow structure on black is unchanged.
+static const raster_color_t neon_deep_pink = {0x75, 0x00, 0x3b};
+static const raster_color_t neon_ice_pink = {0xff, 0xb9, 0xdc};
+#endif
 
 struct face {
     lv_obj_t *canvas;
@@ -822,10 +845,9 @@ static void draw_glow_curve(face_t *face,
     const int32_t radii[] = {strong ? 10 : 7, strong ? 6 : 4,
                              strong ? 3 : 2};
     const uint8_t brightness[] = {34, 102, 255};
-    const raster_color_t deep_cyan = {0x00, 0x67, 0x75};
-    const raster_color_t ice_cyan = {0xb9, 0xff, 0xff};
     for (size_t pass = 0; pass < 3; pass++) {
-        const raster_color_t source = pass == 2 ? ice_cyan : deep_cyan;
+        const raster_color_t source = pass == 2 ? neon_ice_pink
+                                                : neon_deep_pink;
         const uint16_t color = pack_dimmed_color(source, brightness[pass]);
         for (size_t index = 1; index < point_count; index++) {
             draw_raster_segment(face, &points[index - 1], &points[index],
@@ -904,9 +926,9 @@ static void draw_eye(face_t *face, float center_x, float center_y,
     const int32_t halo_radius = LV_MAX(6, (int32_t)(13.0f * pupil_scale));
     const int32_t core_radius = LV_MAX(4, (int32_t)(7.0f * pupil_scale));
     draw_disc(face, pupil_center.x, pupil_center.y, halo_radius,
-              pack_dimmed_color((raster_color_t){0x00, 0x67, 0x75}, 125));
+              pack_dimmed_color(neon_deep_pink, 125));
     draw_disc(face, pupil_center.x, pupil_center.y, core_radius,
-              pack_dimmed_color((raster_color_t){0xb9, 0xff, 0xff}, 255));
+              pack_dimmed_color(neon_ice_pink, 255));
 }
 
 static void build_brow(brow_curve_t *brow, float center_x, float lift,
